@@ -9,8 +9,8 @@
     <File Path="README.md" />
   </Folder>
   <Project Path="NeuroC_ComVision/NeuroC_ComVision.vcxproj" Id="726999f1-5d5c-492c-a1cf-88094fbe4def" />
+  <Project Path="OPC-UA_ClientSimulator/OPC-UA_ClientSimulator.csproj" Id="af0317a8-94d9-41ea-acb9-d29761b9d214" />
+  <Project Path="OPC-UA_Server/OPC-UA_Server.csproj" Id="4a27b0e9-cc9e-4a70-a134-ac326683689a" />
   <Project Path="REST_API_NeuroC_Prep/REST_API_NeuroC_Prep.csproj" Id="0900e88b-1ad7-46ae-8957-2457b95f7316" />
-  <Project Path="VisionClientWPF/VisionClientWPF.csproj" />
-  <Project Path="VisionOpcUaClient/VisionOpcUaClient.csproj" Id="86b0c1a1-98c7-403d-8693-4235ae75d3dd" />
-  <Project Path="VisionOpcUaServer/VisionOpcUaServer.csproj" Id="55a88b02-d042-4ffd-a425-f9b4f064f55e" />
+  <Project Path="VisionClientWPF/VisionClientWPFLokaleTest.csproj" />
 </Solution>
