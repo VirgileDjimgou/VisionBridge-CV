@@ -1,30 +1,35 @@
 # VisionBridge
 
-Native C++ / OpenCV vision engine with multi-protocol access — P/Invoke, REST and OPC-UA.
+C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST and OPC-UA on top.
 
----
+I built this as a small technical playground for my portfolio. I originally started it while preparing
+for an interview at NeuroCheck (industrial image processing, Stuttgart) and it just kind of kept going
+because the problem space is genuinly fun to work with.
 
-This project is part of a series of small, focused technical playgrounds I maintain as a personal portfolio.
-No grand ambitions — just a concrete excuse to work with native/managed interop, real-time image processing,
-industrial communication protocols, and the kind of layered architecture you find in factory vision systems.
-
-It started as interview preparation for NeuroCheck (industrial image processing, Stuttgart).
-It kept growing because the problem space turned out to be genuinely interesting.
+The idea is pretty simple: a C++ DLL grabs frames from the laptop camera, runs OpenCV detection on them,
+and exports everything through a flat C interface. Then on the C# side I have multiple consumers that talk
+to this DLL through different channels. It simulates, on a small scale, the architecture you'd find
+in real industrial vision systems: fast native core, managed layer on top, multiple protocols.
 
 
-## What this project does
+## What it does
 
-A C++ DLL captures frames from a laptop camera and runs OpenCV-based detection algorithms
-(color, face, edge, circle). The results are exposed through a C-compatible export interface.
+The C++ DLL does the heavy lifting: camera capture on a background thread, color filtering (HSV for red objects),
+face detection (Haar cascade), edge detection (Canny), circle detection (Hough transform). Everything
+mutex-protected, results exposed via `extern "C"` functions.
 
-On top of that, a single ASP.NET Core process — the **VisionBridge Runtime** — owns the camera
-and serves the same data through two protocols simultaneously:
+On the C# side there's a single ASP.NET Core process that I call the **VisionBridge Runtime**. It owns
+the camera through P/Invoke and exposes the data through two protocols at once:
 
-- **REST API** (HTTP/JSON) for web clients, dashboards, and testing via Swagger
-- **OPC-UA Server** for industrial consumers (PLCs, SCADA, robots)
+1. A **REST API** with Swagger for web clients and manual testing
+2. An **OPC-UA Server** for industrial consumers (think PLCs, SCADA, robot controllers)
 
-A **WPF desktop client** can connect to the data through three different sources:
-direct P/Invoke to the DLL, HTTP to the REST API, or OPC-UA subscription.
+Both protocols read from the same `VisionService` singleton in memory, so there's no serialization
+overhead between them. One process, one camera, two interfaces.
+
+There's also a **WPF client** that can switch between three data sources at runtime: direct P/Invoke
+to the DLL (fastest, ~30fps), HTTP to the REST API (~5fps with Base64 frames), or OPC-UA
+(no video, just scalar detection values). Same UI code for all three, abstracted behind an `IVisionSource` interface.
 
 
 ## Architecture
@@ -65,41 +70,41 @@ graph LR
     style CLIENTS fill:#2d2d3d,stroke:#6c5ce7,color:#fff
 ```
 
-**Key constraint:** the C++ DLL uses global state (`static cv::VideoCapture`), so only one process
-can own the camera at a time. The Runtime is that process — REST and OPC-UA both read from the
-same `VisionService` singleton in memory, with zero network overhead between them.
+One thing worth noting: the DLL uses global state (`static cv::VideoCapture cap`), so only one
+process can hold the camera. That's why everything goes through the Runtime. If you try to run the
+WPF client in local mode while the Runtime is also running, one of them won't get the camera.
 
 
-## Projects in this solution
+## The projects
 
-### NeuroC_ComVision — C++ DLL
+### NeuroC_ComVision (C++ DLL)
 
-The vision processing engine. Runs a camera capture thread in the background and exposes
-detection results through `extern "C"` exports.
+Camera capture on a dedicated thread with `std::mutex` for frame access. The exported functions:
 
-| Function | What it does |
+| Function | Description |
 |----------|-------------|
-| `StartCamera` / `StopCamera` | Camera lifecycle (dedicated `std::thread`, `std::mutex` for frame access) |
-| `GetFrame` | Color detection — HSV filtering for red objects, contour extraction, bounding box |
-| `DetectFaces` | Haar cascade, up to 32 simultaneous detections |
-| `DetectEdges` | Canny algorithm with Gaussian pre-filtering, grayscale output |
-| `DetectCircles` | Hough transform, results as bounding boxes |
-| `GetFrameInfo` / `GetFrameBytesRgb` | Raw frame access (BGR native + RGB converted) with stride metadata |
+| `StartCamera` / `StopCamera` | Opens/releases the webcam, starts/stops the capture thread |
+| `GetFrame` | HSV color filtering for red objects, returns bounding box |
+| `DetectFaces` | Haar cascade (`haarcascade_frontalface_default.xml`), up to 32 faces |
+| `DetectEdges` | Gaussian blur + Canny, outputs single-channel grayscale |
+| `DetectCircles` | Hough transform, results packed as bounding boxes |
+| `GetFrameInfo` / `GetFrameBytesRgb` | Raw frame data with stride info, BGR or RGB |
 
 
-### VisionBridge Runtime (REST_API_NeuroC_Prep) — ASP.NET Core 8
+### VisionBridge Runtime (REST_API_NeuroC_Prep)
 
-The central process. Owns the camera via P/Invoke and exposes data through two protocols.
+This is the central process. ASP.NET Core 8, owns the camera via P/Invoke.
 
-**REST API** — three controller groups:
+The REST API has three controller groups:
 
 | Controller | Endpoints |
 |------------|-----------|
-| `CameraController` | `POST /api/camera/start`, `stop`, `GET status`, `POST cascade` |
-| `DetectionController` | `GET /api/detection/color`, `faces`, `circles`, `edges` |
-| `FrameController` | `GET /api/frame/info`, `rgb` (Base64), `image` (BMP download) |
+| `CameraController` | `POST start`, `stop`, `GET status`, `POST cascade` |
+| `DetectionController` | `GET color`, `faces`, `circles`, `edges` |
+| `FrameController` | `GET info`, `rgb` (Base64), `image` (BMP download) |
 
-**OPC-UA Server** — embedded as an `IHostedService`, shares the same `VisionService` singleton:
+The OPC-UA server runs as an `IHostedService` in the same process. It polls the `VisionService`
+every 250ms and exposes the results as OPC-UA nodes:
 
 ```
 opc.tcp://localhost:4840/visionbridge
@@ -115,119 +120,120 @@ Objects/Vision
 └── Circles/Count        (Int32)
 ```
 
-Both protocols update from the same data — one camera, one singleton, two interfaces.
+
+### VisionClientWPF
+
+The WPF desktop client. You pick a data source from a dropdown and hit Start:
+
+| Source | Video | Detection | Latency | When to use |
+|--------|:-----:|:---------:|:-------:|-------------|
+| Lokal (P/Invoke) | 30 FPS | All 4 modes | ~1ms | DLL on same machine, no server needed |
+| REST API | ~5 FPS | All 4 modes | ~10ms | Runtime is running somewhere |
+| OPC-UA | None | Scalar values | ~250ms | Industrial monitoring scenario |
+
+The three sources implement an `IVisionSource` interface so the MainWindow code doesn't care
+which one is active. It just calls `DetectColor()`, `GetFrameRgb()` etc. and renders whatever comes back.
+
+The UI renders frames as `BitmapSource` (RGB24), draws bounding boxes and ellipses on a Canvas overlay,
+and shows FPS + detection results in a sidebar.
 
 
-### VisionClientWPF — WPF Desktop Client
+### OPC-UA_ClientSimulator (planned)
 
-A test bench that can connect to vision data through three interchangeable sources,
-selectable at runtime via a dropdown:
-
-| Source | Video | Detection | Latency | Use case |
-|--------|:-----:|:---------:|:-------:|----------|
-| **Lokal (P/Invoke)** | 30 FPS | Full (4 modes) | ~1ms | Standalone, DLL on same machine |
-| **REST API (HTTP)** | ~5 FPS (Base64) | Full (4 modes) | ~10ms | Remote access, Runtime running |
-| **OPC-UA** | No video | Scalar values only | ~250ms | Industrial monitoring |
-
-This is implemented through an `IVisionSource` abstraction — the UI code stays the same
-regardless of which source is active. Each source implements `Start`, `Stop`, `GetFrameRgb`,
-`DetectColor`, `DetectFaces`, `DetectCircles`, and `DetectEdges`.
-
-Features: live video rendering (RGB24 BitmapSource), bounding box / ellipse overlays on a
-Canvas layer, mode selector (Color / Face / Edge / Circle), FPS counter, status display.
+Will be a WPF app that simulates a PLC or robot controller. Subscribes to the OPC-UA nodes
+and makes sorting decisions based on detection results. Haven't gotten to it yet.
 
 
-### OPC-UA_ClientSimulator — WPF (planned)
+### OPC-UA_Server (deprecated)
 
-A simulated industrial consumer (PLC / Robot) that will subscribe to the OPC-UA server
-and react to vision data with sorting logic. Not yet implemented.
-
-
-### OPC-UA_Server — Console (deprecated)
-
-Early standalone OPC-UA server prototype. The functionality has been integrated
-into the VisionBridge Runtime as an `IHostedService`. This project can be removed.
+Was an early standalone console app for the OPC-UA server. Everything got folded into the Runtime
+as a hosted service, so this project is basically dead code at this point.
 
 
 ## Tech stack
 
-| Layer | Technologies |
-|-------|-------------|
-| Vision engine | C++17, OpenCV 4.x, Windows DLL, `std::thread`, `std::mutex` |
-| Runtime | ASP.NET Core 8, OPC Foundation .NET Standard SDK, Swagger/OpenAPI |
-| Desktop client | C# / .NET 8, WPF, P/Invoke, OPC-UA Client SDK, `DispatcherTimer` |
-| Interop | `extern "C"` exports, `DllImport` with `CallingConvention.Cdecl`, struct marshalling |
-| Protocols | HTTP/JSON (REST), OPC-UA (Binary over TCP) |
+| Layer | What |
+|-------|------|
+| Vision engine | C++17, OpenCV 4.x, Windows DLL (`__declspec(dllexport)`), `std::thread` / `std::mutex` |
+| Runtime | ASP.NET Core 8, OPC Foundation .NET Standard SDK, Swagger |
+| WPF client | .NET 8, WPF, P/Invoke, OPC-UA Client SDK, `DispatcherTimer` |
+| Interop | `extern "C"`, `DllImport` with `CallingConvention.Cdecl`, manual struct marshalling |
+| Protocols | HTTP/JSON, OPC-UA binary over TCP |
 
 
 ## Project structure
 
 ```
 NeuroC_ComVision/
-├── NeuroC_ComVision/              # C++ DLL — OpenCV processing engine
-│   ├── NeuroC_ComVision.h         # Exported C interface (structs + functions)
-│   └── NeuroC_ComVision.cpp       # Capture thread, detection algorithms
+├── NeuroC_ComVision/              # C++ DLL
+│   ├── NeuroC_ComVision.h         # C export interface
+│   └── NeuroC_ComVision.cpp       # Capture thread + detection algorithms
 │
-├── REST_API_NeuroC_Prep/          # VisionBridge Runtime (REST + OPC-UA)
-│   ├── Program.cs                 # Host setup — registers VisionService + OpcUaHostedService
-│   ├── Interop/NativeInterop.cs   # P/Invoke declarations
-│   ├── Services/VisionService.cs  # Singleton — camera lifecycle + detection logic
-│   ├── Controllers/               # CameraController, DetectionController, FrameController
-│   ├── Models/VisionDtos.cs       # Shared response types
-│   └── OpcUa/                     # Embedded OPC-UA server
-│       ├── VisionNodeManager.cs   # Node tree creation + 250ms polling loop
-│       ├── VisionOpcUaServer.cs   # StandardServer subclass
-│       └── OpcUaHostedService.cs  # IHostedService bootstrap
+├── REST_API_NeuroC_Prep/          # VisionBridge Runtime
+│   ├── Program.cs                 # Registers VisionService + OpcUaHostedService
+│   ├── Interop/NativeInterop.cs
+│   ├── Services/VisionService.cs  # The singleton that wraps all native calls
+│   ├── Controllers/               # Camera, Detection, Frame
+│   ├── Models/VisionDtos.cs
+│   └── OpcUa/
+│       ├── VisionNodeManager.cs   # OPC-UA node tree + polling
+│       ├── VisionOpcUaServer.cs
+│       └── OpcUaHostedService.cs
 │
-├── VisionClientWPF/               # WPF desktop client (multi-source)
-│   ├── MainWindow.xaml / .cs      # UI + rendering loop
-│   ├── VisionInterop.cs           # P/Invoke declarations (for local mode)
-│   └── Sources/                   # Data source abstraction
-│       ├── IVisionSource.cs       # Interface + shared result types
-│       ├── LocalVisionSource.cs   # P/Invoke direct
-│       ├── RestVisionSource.cs    # HttpClient to REST API
-│       └── OpcUaVisionSource.cs   # OPC-UA Session.Read
+├── VisionClientWPF/               # Desktop client
+│   ├── MainWindow.xaml / .cs
+│   ├── VisionInterop.cs           # P/Invoke (for local mode)
+│   └── Sources/
+│       ├── IVisionSource.cs       # Interface + result types
+│       ├── LocalVisionSource.cs   # P/Invoke
+│       ├── RestVisionSource.cs    # HTTP
+│       └── OpcUaVisionSource.cs   # OPC-UA
 │
-├── OPC-UA_ClientSimulator/        # PLC/Robot simulator (planned)
-└── OPC-UA_Server/                 # Deprecated — integrated into Runtime
+├── OPC-UA_ClientSimulator/        # Planned
+└── OPC-UA_Server/                 # Deprecated
 ```
 
 
-## How to run
+## Running it
 
-**Standalone (WPF only):**
-Start `VisionClientWPF` with source set to "Lokal (P/Invoke)". Requires the DLL in the output directory.
+**Just the WPF client:**
+Set the source to "Lokal (P/Invoke)" and click Start. You need the DLL in the output directory.
 
-**Full stack:**
-1. Start `REST_API_NeuroC_Prep` — this launches both the REST API and the OPC-UA server
-2. Open Swagger at `https://localhost:7158/swagger` — call `POST /api/camera/start`
-3. Start `VisionClientWPF` with source set to "REST API" or "OPC-UA"
-4. Optionally connect UaExpert to `opc.tcp://localhost:4840/visionbridge`
+**The full thing:**
+1. Start `REST_API_NeuroC_Prep` (launches REST API + OPC-UA server in one process)
+2. Go to `https://localhost:7158/swagger` and call `POST /api/camera/start`
+3. Start `VisionClientWPF`, pick "REST API" or "OPC-UA" as source
+4. Or connect UaExpert to `opc.tcp://localhost:4840/visionbridge` to browse the nodes
 
 
-## What I practiced building this
+## What I got out of this
 
-- Native/managed memory boundaries and struct alignment across C++ and C#
-- Thread safety across a DLL boundary (global state, single camera constraint)
-- Real-time frame rendering in WPF without blocking the UI thread
-- Embedding an OPC-UA server inside an ASP.NET Core process as an `IHostedService`
-- Protocol abstraction — same UI consuming P/Invoke, HTTP, and OPC-UA through one interface
-- Designing a REST layer on top of hardware-bound resources (one camera = one singleton)
-- Understanding why industrial systems use OPC-UA and REST together, not instead of each other
+This project gave me a chance to actually deal with stuff that's hard to learn from docs alone.
+Debugging struct alignment mismatches between C++ and C# at runtime is a very different experience
+than reading about `StructLayout` on MSDN. Same with threading across a DLL boundary, or figuring
+out how to render 30fps video in WPF without starving the dispatcher.
+
+Some of the things I worked through:
+
+* Struct layout and memory alignment across native/managed boundaries
+* Mutex-protected global state in a DLL consumed by multiple managed threads
+* WPF rendering pipeline and how `DispatcherTimer` + `BitmapSource.Freeze()` interact
+* Embedding OPC-UA inside an ASP.NET Core process as an `IHostedService`
+* Why industrial systems typically run OPC-UA and REST side by side (not one or the other)
+* Abstracting over three completely different data sources behind one interface
+
+Nothing groundbreaking. Just the kind of practice that sticks.
 
 
 ## Disclaimer
 
-This is a portfolio exercise, not a production system.
-The code is intentionally kept straightforward.
-If you are looking for an industrial-grade vision framework, this is not it.
+This is a portfolio project, not production code. I kept things straightforward on purpose.
+Don't expect industrial-grade anything here.
 
 
 ## Author
 
-**Patrick Djimgou** — Germany
-
-Part of a personal technical portfolio.
+Patrick Djimgou
 
 
 
