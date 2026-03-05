@@ -30,7 +30,7 @@ direct P/Invoke to the DLL, HTTP to the REST API, or OPC-UA subscription.
 ## Architecture
 
 ```mermaid
-graph TD
+graph LR
     CAM["Camera"]
 
     subgraph RUNTIME ["VisionBridge Runtime — single process"]
@@ -48,6 +48,7 @@ graph TD
     end
 
     subgraph CLIENTS ["Consumers"]
+        direction TB
         WPF["WPF Client\n3 modes: Local / REST / OPC-UA"]
         UAEXP["UaExpert\nor any OPC-UA client"]
         WEB["Web / Cloud"]
@@ -227,6 +228,8 @@ If you are looking for an industrial-grade vision framework, this is not it.
 **Patrick Djimgou** — Germany
 
 Part of a personal technical portfolio.
+
+
 
 
 
