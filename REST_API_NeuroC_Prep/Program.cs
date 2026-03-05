@@ -1,3 +1,4 @@
+using REST_API_NeuroC_Prep.OpcUa;
 using REST_API_NeuroC_Prep.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,15 +10,18 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
     {
-        Title = "NeuroC Vision API",
+        Title = "VisionBridge Runtime",
         Version = "v1",
-        Description = "REST-API für OpenCV-basierte Bildverarbeitung via NeuroCComVision.dll. " +
-                      "Bietet Kamerasteuerung, Farb-/Gesichts-/Kreis-/Kantenerkennung."
+        Description = "Vision Controller — REST API + OPC-UA Server. " +
+                      "Ein Prozess, eine Kamera, zwei Protokolle."
     });
 });
 
 // VisionService als Singleton — eine Kamera, eine Instanz
 builder.Services.AddSingleton<VisionService>();
+
+// OPC-UA Server als HostedService — teilt sich den VisionService
+builder.Services.AddHostedService<OpcUaHostedService>();
 
 var app = builder.Build();
 
