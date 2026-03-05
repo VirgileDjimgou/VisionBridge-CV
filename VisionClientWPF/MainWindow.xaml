@@ -33,10 +33,20 @@
         <!-- Seitenleiste -->
         <StackPanel Grid.Column="1" Margin="10,0,0,0">
 
-            <TextBlock Text="NeuroC Vision"
+            <TextBlock Text="VisionBridge"
                        FontSize="20" FontWeight="Bold"
                        Foreground="White"
                        Margin="0,0,0,15"/>
+
+            <!-- Datenquelle -->
+            <TextBlock Text="Datenquelle" Foreground="#CCC"
+                       FontSize="13" Margin="0,0,0,5"/>
+
+            <ComboBox x:Name="SourceComboBox" Width="180" Margin="0,0,0,15">
+                <ComboBoxItem Content="Lokal (P/Invoke)" IsSelected="True"/>
+                <ComboBoxItem Content="REST API (HTTP)"/>
+                <ComboBoxItem Content="OPC-UA"/>
+            </ComboBox>
 
             <!-- Steuerung -->
             <Button Content="▶ Start" Width="180" Height="36"
