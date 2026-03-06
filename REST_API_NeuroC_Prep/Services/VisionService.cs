@@ -6,12 +6,19 @@ namespace REST_API_NeuroC_Prep.Services
     /// <summary>
     /// Thread-sicherer Service, der alle nativen OpenCV-Funktionen
     /// kapselt. Wird als Singleton registriert (eine Kamera = eine Instanz).
+    /// Das konkrete Backend (Native oder Simulation) wird per DI injiziert.
     /// </summary>
     public sealed class VisionService : IDisposable
     {
         private readonly object _lock = new();
+        private readonly IVisionBackend _backend;
         private bool _running;
         private bool _cascadeLoaded;
+
+        public VisionService(IVisionBackend backend)
+        {
+            _backend = backend;
+        }
 
         // ===== Kamera-Steuerung =====
 
@@ -32,7 +39,7 @@ namespace REST_API_NeuroC_Prep.Services
                 if (_running)
                     return (true, "Kamera läuft bereits");
 
-                if (!NativeInterop.StartCamera())
+                if (!_backend.StartCamera())
                     return (false, "Kamera konnte nicht geöffnet werden (Hardware-Fehler oder bereits belegt)");
 
                 _running = true;
@@ -52,7 +59,7 @@ namespace REST_API_NeuroC_Prep.Services
                 if (!_running)
                     return (true, "Kamera war bereits gestoppt");
 
-                NativeInterop.StopCamera();
+                _backend.StopCamera();
                 _running = false;
                 return (true, "Kamera gestoppt");
             }
@@ -74,10 +81,10 @@ namespace REST_API_NeuroC_Prep.Services
                 AppDomain.CurrentDomain.BaseDirectory,
                 "haarcascade_frontalface_default.xml");
 
-            if (!File.Exists(cascadePath))
+            if (_backend is NativeVisionBackend && !File.Exists(cascadePath))
                 return (false, $"Cascade-Datei nicht gefunden: {cascadePath}");
 
-            if (NativeInterop.LoadFaceCascade(cascadePath))
+            if (_backend.LoadFaceCascade(cascadePath))
             {
                 _cascadeLoaded = true;
                 return (true, "Cascade erfolgreich geladen");
@@ -93,7 +100,7 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!NativeInterop.GetFrameInfo(out var info)) return null;
+                if (!_backend.GetFrameInfo(out var info)) return null;
 
                 return new FrameInfoDto(
                     info.width, info.height,
@@ -109,12 +116,12 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!NativeInterop.GetFrameInfo(out var info)) return null;
+                if (!_backend.GetFrameInfo(out var info)) return null;
 
                 int rgbSize = info.width * info.height * 3;
                 byte[] buffer = new byte[rgbSize];
 
-                if (!NativeInterop.GetFrameBytesRgb(buffer, rgbSize))
+                if (!_backend.GetFrameBytesRgb(buffer, rgbSize))
                     return null;
 
                 return new FrameBase64Dto(
@@ -129,12 +136,12 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!NativeInterop.GetFrameInfo(out var info)) return null;
+                if (!_backend.GetFrameInfo(out var info)) return null;
 
                 int bgrSize = info.stride * info.height;
                 byte[] bgrBuffer = new byte[bgrSize];
 
-                if (!NativeInterop.GetFrameBytes(bgrBuffer, bgrSize))
+                if (!_backend.GetFrameBytes(bgrBuffer, bgrSize))
                     return null;
 
                 // BGR-Rohdaten → BMP → PNG über System.Drawing-freien Weg
@@ -149,7 +156,7 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!NativeInterop.GetFrame(out var result)) return null;
+                if (!_backend.GetFrame(out var result)) return null;
 
                 return new ColorDetectionDto(
                     result.detected,
@@ -167,7 +174,7 @@ namespace REST_API_NeuroC_Prep.Services
             {
                 if (!_running) return null;
                 if (!_cascadeLoaded) return null;
-                if (!NativeInterop.DetectFaces(out var result)) return null;
+                if (!_backend.DetectFaces(out var result)) return null;
 
                 return ToMultiDto("face", result);
             }
@@ -180,7 +187,7 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!NativeInterop.DetectCircles(out var result)) return null;
+                if (!_backend.DetectCircles(out var result)) return null;
 
                 return ToMultiDto("circle", result);
             }
@@ -193,12 +200,12 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!NativeInterop.GetFrameInfo(out var info)) return null;
+                if (!_backend.GetFrameInfo(out var info)) return null;
 
                 int bufferSize = info.width * info.height;
                 byte[] edgeBuffer = new byte[bufferSize];
 
-                if (!NativeInterop.DetectEdges(edgeBuffer, bufferSize,
+                if (!_backend.DetectEdges(edgeBuffer, bufferSize,
                         out int w, out int h))
                     return null;
 
@@ -262,7 +269,7 @@ namespace REST_API_NeuroC_Prep.Services
             {
                 if (_running)
                 {
-                    NativeInterop.StopCamera();
+                    _backend.StopCamera();
                     _running = false;
                 }
             }

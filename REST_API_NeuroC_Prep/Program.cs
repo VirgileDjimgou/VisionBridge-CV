@@ -1,3 +1,4 @@
+using REST_API_NeuroC_Prep.Interop;
 using REST_API_NeuroC_Prep.OpcUa;
 using REST_API_NeuroC_Prep.Services;
 
@@ -16,6 +17,13 @@ builder.Services.AddSwaggerGen(options =>
                       "Ein Prozess, eine Kamera, zwei Protokolle."
     });
 });
+
+// Backend wählen: Simulation (ohne DLL/Kamera) oder Native (Produktion)
+bool useSimulation = builder.Configuration.GetValue<bool>("VisionBridge:Simulation");
+if (useSimulation)
+    builder.Services.AddSingleton<IVisionBackend, SimulatedVisionBackend>();
+else
+    builder.Services.AddSingleton<IVisionBackend, NativeVisionBackend>();
 
 // VisionService als Singleton — eine Kamera, eine Instanz
 builder.Services.AddSingleton<VisionService>();

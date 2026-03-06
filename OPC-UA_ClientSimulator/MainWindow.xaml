@@ -3,10 +3,97 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:OPC_UA_ClientSimulator"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="VisionBridge — OPC-UA Client Simulator (PLC/Sortierlogik)"
+        Height="620" Width="860"
+        Background="#1a1a2e">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
+        <!-- Connection -->
+        <Border Grid.Row="0" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Endpoint:" Foreground="#ccc" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="TxtEndpoint" Width="350" Text="opc.tcp://localhost:4840/visionbridge"
+                         Background="#3a3a4d" Foreground="White" BorderBrush="#555" Padding="6,4"/>
+                <Button x:Name="BtnConnect" Content="Verbinden" Margin="12,0,0,0" Padding="16,6"
+                        Background="#27ae60" Foreground="White" Click="BtnConnect_Click"
+                        FontWeight="Bold" BorderThickness="0"/>
+                <Button x:Name="BtnDisconnect" Content="Trennen" Margin="8,0,0,0" Padding="16,6"
+                        Background="#c0392b" Foreground="White" Click="BtnDisconnect_Click"
+                        FontWeight="Bold" BorderThickness="0" IsEnabled="False"/>
+                <Ellipse x:Name="StatusDot" Width="14" Height="14" Fill="#c0392b" Margin="16,0,8,0"
+                         VerticalAlignment="Center"/>
+                <TextBlock x:Name="TxtStatus" Text="Getrennt" Foreground="#999"
+                           VerticalAlignment="Center" FontSize="13"/>
+            </StackPanel>
+        </Border>
+
+        <!-- OPC-UA Node Values -->
+        <Border Grid.Row="1" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Camera -->
+                <StackPanel Grid.Column="0" Margin="8,0">
+                    <TextBlock Text="📷 Kamera" Foreground="#6c5ce7" FontWeight="Bold" FontSize="14"/>
+                    <TextBlock x:Name="TxtCameraRunning" Text="Running: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <!-- Color -->
+                <StackPanel Grid.Column="1" Margin="8,0">
+                    <TextBlock Text="🔴 Farbe" Foreground="#e74c3c" FontWeight="Bold" FontSize="14"/>
+                    <TextBlock x:Name="TxtColorDetected" Text="Detected: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="TxtColorBox" Text="Box: —" Foreground="#999" FontSize="11"/>
+                </StackPanel>
+
+                <!-- Faces -->
+                <StackPanel Grid.Column="2" Margin="8,0">
+                    <TextBlock Text="👤 Gesichter" Foreground="#f39c12" FontWeight="Bold" FontSize="14"/>
+                    <TextBlock x:Name="TxtFaceCount" Text="Count: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <!-- Circles -->
+                <StackPanel Grid.Column="3" Margin="8,0">
+                    <TextBlock Text="⭕ Kreise" Foreground="#3498db" FontWeight="Bold" FontSize="14"/>
+                    <TextBlock x:Name="TxtCircleCount" Text="Count: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Sorting Decision Log -->
+        <Border Grid.Row="2" Background="#2d2d3d" CornerRadius="8" Padding="12">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="Sortierlogik — Entscheidungsprotokoll"
+                           Foreground="#6c5ce7" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
+                <ListBox x:Name="LogList" Background="Transparent" BorderThickness="0"
+                         Foreground="#ccc" FontFamily="Consolas" FontSize="12"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Current Decision -->
+        <Border Grid.Row="3" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <TextBlock Text="Aktuelle Entscheidung:" Foreground="#ccc" FontSize="16"
+                           VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Border x:Name="DecisionBorder" CornerRadius="6" Padding="20,8" Background="#555">
+                    <TextBlock x:Name="TxtDecision" Text="— Warte auf Daten —"
+                               Foreground="White" FontSize="18" FontWeight="Bold"/>
+                </Border>
+                <TextBlock x:Name="TxtDecisionCount" Text="" Foreground="#999" FontSize="13"
+                           VerticalAlignment="Center" Margin="16,0,0,0"/>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

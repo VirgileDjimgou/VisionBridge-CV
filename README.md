@@ -36,17 +36,17 @@ to the DLL (fastest, ~30fps), HTTP to the REST API (~5fps with Base64 frames), o
 
 ```mermaid
 graph LR
-    CAM["Camera"]
+    CAM["Camera\n(or Simulation)"]
 
     subgraph RUNTIME ["VisionBridge Runtime — single process"]
         direction TB
-        DLL["C++ DLL\nOpenCV 4.x / P/Invoke"]
+        BACKEND["IVisionBackend\nNative (C++ DLL) or Simulated"]
         SVC["VisionService\nSingleton"]
         REST["REST API\n/api/camera\n/api/detection\n/api/frame"]
         OPC["OPC-UA Server\nopc.tcp://:4840/visionbridge"]
         SWAGGER["Swagger UI"]
 
-        DLL --> SVC
+        BACKEND --> SVC
         SVC --> REST
         SVC --> OPC
         REST -.- SWAGGER
@@ -55,16 +55,18 @@ graph LR
     subgraph CLIENTS ["Consumers"]
         direction TB
         WPF["WPF Client\n3 modes: Local / REST / OPC-UA"]
+        PLCSIM["OPC-UA Client Simulator\nSortierlogik (SPS)"]
         UAEXP["UaExpert\nor any OPC-UA client"]
         WEB["Web / Cloud"]
     end
 
-    CAM --> DLL
+    CAM --> BACKEND
     REST -- "HTTP/JSON" --> WPF
     REST -- "HTTP/JSON" --> WEB
     OPC -- "OPC-UA" --> WPF
+    OPC -- "OPC-UA" --> PLCSIM
     OPC -- "OPC-UA" --> UAEXP
-    DLL -. "P/Invoke direct\nstandalone mode" .-> WPF
+    BACKEND -. "P/Invoke direct\nstandalone mode" .-> WPF
 
     style RUNTIME fill:#1a1a2e,stroke:#e74c3c,color:#fff
     style CLIENTS fill:#2d2d3d,stroke:#6c5ce7,color:#fff
@@ -138,10 +140,22 @@ The UI renders frames as `BitmapSource` (RGB24), draws bounding boxes and ellips
 and shows FPS + detection results in a sidebar.
 
 
-### OPC-UA_ClientSimulator (planned)
+### OPC-UA_ClientSimulator
 
-Will be a WPF app that simulates a PLC or robot controller. Subscribes to the OPC-UA nodes
-and makes sorting decisions based on detection results. Haven't gotten to it yet.
+WPF app that simulates a PLC or robot controller. Connects to the VisionBridge Runtime via OPC-UA
+and makes sorting decisions based on detection results in real time.
+
+The sorting logic follows industrial priorities:
+
+| OPC-UA Node | Rule | Action |
+|---|---|---|
+| `Faces/Count > 0` | Face detected in frame | 🛑 **HALT** — stop inspection station (safety) |
+| `Color/Detected = true` | Red object detected | ⚠ **REJECT** — color defect, sort out |
+| `Circles/Count ≥ 3` | Enough drill holes | ✅ **QUALITY OK** — pass through |
+
+The app logs every decision with timestamp and shows running statistics (total decisions,
+passed, rejected, halted). This completes the industrial demo loop: camera → detection →
+OPC-UA → PLC decision.
 
 
 ### OPC-UA_Server (deprecated)
@@ -171,8 +185,12 @@ NeuroC_ComVision/
 │
 ├── REST_API_NeuroC_Prep/          # VisionBridge Runtime
 │   ├── Program.cs                 # Registers VisionService + OpcUaHostedService
-│   ├── Interop/NativeInterop.cs
-│   ├── Services/VisionService.cs  # The singleton that wraps all native calls
+│   ├── Interop/
+│   │   ├── IVisionBackend.cs      # Abstraction over native/simulated engine
+│   │   ├── NativeVisionBackend.cs # Wraps P/Invoke calls to the C++ DLL
+│   │   ├── SimulatedVisionBackend.cs # Synthetic data (no DLL/camera needed)
+│   │   └── NativeInterop.cs      # P/Invoke declarations
+│   ├── Services/VisionService.cs  # The singleton that wraps all vision calls
 │   ├── Controllers/               # Camera, Detection, Frame
 │   ├── Models/VisionDtos.cs
 │   └── OpcUa/
@@ -189,21 +207,31 @@ NeuroC_ComVision/
 │       ├── RestVisionSource.cs    # HTTP
 │       └── OpcUaVisionSource.cs   # OPC-UA
 │
-├── OPC-UA_ClientSimulator/        # Planned
+├── OPC-UA_ClientSimulator/        # PLC/sorting logic simulator
+│   ├── MainWindow.xaml            # Dashboard UI
+│   └── MainWindow.xaml.cs         # OPC-UA client + sorting rules
+│
 └── OPC-UA_Server/                 # Deprecated
 ```
 
 
 ## Running it
 
+**Simulation mode (no camera or DLL needed):**
+Set `"VisionBridge:Simulation": true` in `appsettings.json` (or pass `--VisionBridge:Simulation=true`
+on the command line), then start `REST_API_NeuroC_Prep`. The API generates synthetic detection data —
+a red object moving on a simulated conveyor belt, cycling face/circle counts. All endpoints work
+identically to the real camera mode. This is the easiest way to explore the project without any hardware.
+
 **Just the WPF client:**
 Set the source to "Lokal (P/Invoke)" and click Start. You need the DLL in the output directory.
 
-**The full thing:**
+**The full industrial loop (with OPC-UA Client Simulator):**
 1. Start `REST_API_NeuroC_Prep` (launches REST API + OPC-UA server in one process)
 2. Go to `https://localhost:7158/swagger` and call `POST /api/camera/start`
-3. Start `VisionClientWPF`, pick "REST API" or "OPC-UA" as source
-4. Or connect UaExpert to `opc.tcp://localhost:4840/visionbridge` to browse the nodes
+3. Start `OPC-UA_ClientSimulator` and click "Verbinden" — watch sorting decisions in real time
+4. Start `VisionClientWPF`, pick "REST API" or "OPC-UA" as source
+5. Or connect UaExpert to `opc.tcp://localhost:4840/visionbridge` to browse the nodes
 
 
 ## What I got out of this
@@ -221,6 +249,8 @@ Some of the things I worked through:
 * Embedding OPC-UA inside an ASP.NET Core process as an `IHostedService`
 * Why industrial systems typically run OPC-UA and REST side by side (not one or the other)
 * Abstracting over three completely different data sources behind one interface
+* Dependency injection of hardware backends (`IVisionBackend`) for testability without physical devices
+* Simulating a PLC sorting loop that consumes OPC-UA nodes and makes real-time decisions
 
 Nothing groundbreaking. Just the kind of practice that sticks.
 
