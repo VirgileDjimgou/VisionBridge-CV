@@ -6,11 +6,19 @@ public readonly record struct DetectionBox(int X, int Y, int Width, int Height);
 
 public record FrameResult(int Width, int Height, byte[] RgbData);
 
-public record ColorResult(bool Detected, DetectionBox Box);
+public record ColorResult(bool Detected, DetectionBox Box, double Confidence = 0);
 
-public record MultiResult(int Count, DetectionBox[] Items);
+public record MultiResult(int Count, DetectionBox[] Items, double Confidence = 0);
 
 public record EdgeResult(int Width, int Height, byte[] Data);
+
+/// <summary>Runtime-Diagnose (von REST oder OPC-UA).</summary>
+public record RuntimeDiagnostics(
+    string Uptime,
+    string BackendMode,
+    bool CameraRunning,
+    long TotalInspections,
+    double CurrentFps);
 
 /// <summary>
 /// Abstraktion über verschiedene Vision-Datenquellen.
@@ -21,6 +29,7 @@ public interface IVisionSource : IDisposable
     string Name { get; }
     bool SupportsVideo { get; }
     bool SupportsEdgeDetection { get; }
+    bool SupportsDiagnostics { get; }
 
     bool Start();
     void Stop();
@@ -30,4 +39,5 @@ public interface IVisionSource : IDisposable
     MultiResult? DetectFaces();
     MultiResult? DetectCircles();
     EdgeResult? DetectEdges();
+    RuntimeDiagnostics? GetDiagnostics();
 }

@@ -18,13 +18,24 @@ namespace REST_API_NeuroC_Prep.Models
 
     // ===== Farberkennung =====
 
-    public record ColorDetectionDto(bool Detected, BoundingBoxDto? BoundingBox);
+    public record ColorDetectionDto(
+        bool Detected,
+        BoundingBoxDto? BoundingBox,
+        long InspectionId = 0,
+        DateTime? Timestamp = null,
+        double Confidence = 0);
 
     // ===== Mehrfach-Erkennung (Gesichter, Kreise) =====
 
-    public record DetectionItemDto(int Index, BoundingBoxDto BoundingBox);
+    public record DetectionItemDto(int Index, BoundingBoxDto BoundingBox, double Confidence = 0);
 
-    public record MultiDetectionDto(string Type, int Count, List<DetectionItemDto> Detections);
+    public record MultiDetectionDto(
+        string Type,
+        int Count,
+        List<DetectionItemDto> Detections,
+        long InspectionId = 0,
+        DateTime? Timestamp = null,
+        double Confidence = 0);
 
     // ===== Frame als Bild =====
 
@@ -35,4 +46,32 @@ namespace REST_API_NeuroC_Prep.Models
 
     /// <summary>Canny-Kantenbild als Base64-kodierter Graustufenstring.</summary>
     public record EdgeDetectionDto(int Width, int Height, string Base64Data);
+
+    // ===== Anlagen-Steuerung (beschreibbar via OPC-UA / REST) =====
+
+    /// <summary>Zustand der simulierten Förderband-Anlage.</summary>
+    public record PlantControlDto(
+        double ConveyorSpeed,
+        bool InspectionEnabled,
+        bool RejectGateOpen);
+
+    // ===== Diagnose / Health Check =====
+
+    /// <summary>Letzte erfolgreiche Erkennung — Typ, Zeitpunkt, Confidence, Latenz.</summary>
+    public record LastDetectionDto(
+        string Type,
+        DateTime Timestamp,
+        double Confidence,
+        double LatencyMs);
+
+    /// <summary>Runtime-Diagnose — Uptime, FPS, Backend, Anlagenzustand.</summary>
+    public record DiagnosticsDto(
+        string Uptime,
+        string BackendMode,
+        bool CameraRunning,
+        bool CascadeLoaded,
+        long TotalInspections,
+        double CurrentFps,
+        PlantControlDto PlantControl,
+        LastDetectionDto? LastDetection);
 }

@@ -13,6 +13,7 @@ public class RestVisionSource : IVisionSource
     public string Name => "REST API (HTTP)";
     public bool SupportsVideo => true;
     public bool SupportsEdgeDetection => true;
+    public bool SupportsDiagnostics => true;
 
     private readonly HttpClient _http;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
@@ -71,7 +72,8 @@ public class RestVisionSource : IVisionSource
             var b = r.BoundingBox;
             return new ColorResult(
                 r.Detected,
-                b != null ? new DetectionBox(b.X, b.Y, b.Width, b.Height) : default);
+                b != null ? new DetectionBox(b.X, b.Y, b.Width, b.Height) : default,
+                r.Confidence);
         }
         catch { return null; }
     }
@@ -110,7 +112,7 @@ public class RestVisionSource : IVisionSource
                                               d.BoundingBox.Width, d.BoundingBox.Height))
                 .ToArray() ?? [];
 
-            return new MultiResult(r.Count, items);
+            return new MultiResult(r.Count, items, r.Confidence);
         }
         catch { return null; }
     }
@@ -127,6 +129,7 @@ public class RestVisionSource : IVisionSource
     {
         public bool Detected { get; set; }
         public BoxDto? BoundingBox { get; set; }
+        public double Confidence { get; set; }
     }
 
     private class BoxDto
@@ -140,6 +143,7 @@ public class RestVisionSource : IVisionSource
     private class MultiDto
     {
         public int Count { get; set; }
+        public double Confidence { get; set; }
         public DetectionItemDto[]? Detections { get; set; }
     }
 
@@ -153,5 +157,27 @@ public class RestVisionSource : IVisionSource
         public int Width { get; set; }
         public int Height { get; set; }
         public string? Base64Data { get; set; }
+    }
+
+    private class DiagDto
+    {
+        public string Uptime { get; set; } = "";
+        public string BackendMode { get; set; } = "";
+        public bool CameraRunning { get; set; }
+        public long TotalInspections { get; set; }
+        public double CurrentFps { get; set; }
+    }
+
+    public RuntimeDiagnostics? GetDiagnostics()
+    {
+        try
+        {
+            var json = Task.Run(() => _http.GetStringAsync("api/diagnostics")).Result;
+            var r = JsonSerializer.Deserialize<DiagDto>(json, JsonOpts);
+            if (r == null) return null;
+            return new RuntimeDiagnostics(r.Uptime, r.BackendMode, r.CameraRunning,
+                r.TotalInspections, r.CurrentFps);
+        }
+        catch { return null; }
     }
 }

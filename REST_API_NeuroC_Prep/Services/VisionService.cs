@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using REST_API_NeuroC_Prep.Interop;
 using REST_API_NeuroC_Prep.Models;
 
@@ -7,6 +8,11 @@ namespace REST_API_NeuroC_Prep.Services
     /// Thread-sicherer Service, der alle nativen OpenCV-Funktionen
     /// kapselt. Wird als Singleton registriert (eine Kamera = eine Instanz).
     /// Das konkrete Backend (Native oder Simulation) wird per DI injiziert.
+    ///
+    /// Erweitert um:
+    ///   - Inspektions-ID + Timestamp + Confidence auf allen Erkennungen
+    ///   - Anlagen-Steuerung (ConveyorSpeed, InspectionEnabled, RejectGateOpen)
+    ///   - Runtime-Metriken (Uptime, FPS, Inspektionszähler)
     /// </summary>
     public sealed class VisionService : IDisposable
     {
@@ -15,9 +21,48 @@ namespace REST_API_NeuroC_Prep.Services
         private bool _running;
         private bool _cascadeLoaded;
 
+        // ===== Metriken =====
+        private readonly DateTime _startTime = DateTime.UtcNow;
+        private long _inspectionCounter;
+        private readonly Stopwatch _fpsWatch = Stopwatch.StartNew();
+        private int _fpsFrameCount;
+        private double _currentFps;
+        private LastDetectionDto? _lastDetection;
+
+        // ===== Anlagen-Steuerung (beschreibbar via OPC-UA oder REST) =====
+        private double _conveyorSpeed = 1.2;        // m/s
+        private bool _inspectionEnabled = true;
+        private bool _rejectGateOpen;
+
         public VisionService(IVisionBackend backend)
         {
             _backend = backend;
+        }
+
+        // ===== Anlagen-Steuerung =====
+
+        public double ConveyorSpeed
+        {
+            get { lock (_lock) return _conveyorSpeed; }
+            set { lock (_lock) _conveyorSpeed = Math.Clamp(value, 0, 5.0); }
+        }
+
+        public bool InspectionEnabled
+        {
+            get { lock (_lock) return _inspectionEnabled; }
+            set { lock (_lock) _inspectionEnabled = value; }
+        }
+
+        public bool RejectGateOpen
+        {
+            get { lock (_lock) return _rejectGateOpen; }
+            set { lock (_lock) _rejectGateOpen = value; }
+        }
+
+        public PlantControlDto GetPlantControl()
+        {
+            lock (_lock)
+                return new PlantControlDto(_conveyorSpeed, _inspectionEnabled, _rejectGateOpen);
         }
 
         // ===== Kamera-Steuerung =====
@@ -93,6 +138,25 @@ namespace REST_API_NeuroC_Prep.Services
             return (false, "Cascade konnte nicht geladen werden (ungültiges Format?)");
         }
 
+        // ===== Diagnose / Health Check =====
+
+        public DiagnosticsDto GetDiagnostics()
+        {
+            lock (_lock)
+            {
+                var uptime = DateTime.UtcNow - _startTime;
+                return new DiagnosticsDto(
+                    $"{(int)uptime.TotalHours:D2}:{uptime.Minutes:D2}:{uptime.Seconds:D2}",
+                    _backend is SimulatedVisionBackend ? "Simulated" : "Native",
+                    _running,
+                    _cascadeLoaded,
+                    _inspectionCounter,
+                    _currentFps,
+                    new PlantControlDto(_conveyorSpeed, _inspectionEnabled, _rejectGateOpen),
+                    _lastDetection);
+            }
+        }
+
         // ===== Frame-Informationen =====
 
         public FrameInfoDto? GetFrameInfo()
@@ -124,6 +188,8 @@ namespace REST_API_NeuroC_Prep.Services
                 if (!_backend.GetFrameBytesRgb(buffer, rgbSize))
                     return null;
 
+                TrackFrame();
+
                 return new FrameBase64Dto(
                     info.width, info.height, 3,
                     Convert.ToBase64String(buffer));
@@ -144,6 +210,8 @@ namespace REST_API_NeuroC_Prep.Services
                 if (!_backend.GetFrameBytes(bgrBuffer, bgrSize))
                     return null;
 
+                TrackFrame();
+
                 // BGR-Rohdaten → BMP → PNG über System.Drawing-freien Weg
                 return ConvertBgrToBmpBytes(bgrBuffer, info.width, info.height, info.stride);
             }
@@ -156,13 +224,29 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
+
+                var sw = Stopwatch.StartNew();
                 if (!_backend.GetFrame(out var result)) return null;
+                sw.Stop();
+
+                TrackFrame();
+                long id = ++_inspectionCounter;
+                var now = DateTime.UtcNow;
+
+                // Confidence: größere Fläche → höheres Vertrauen
+                double confidence = result.detected
+                    ? Math.Clamp((result.width * result.height) / 10000.0, 0.1, 1.0)
+                    : 0;
+
+                if (result.detected)
+                    _lastDetection = new LastDetectionDto("color", now, confidence, sw.Elapsed.TotalMilliseconds);
 
                 return new ColorDetectionDto(
                     result.detected,
                     result.detected
                         ? new BoundingBoxDto(result.x, result.y, result.width, result.height)
-                        : null);
+                        : null,
+                    id, now, confidence);
             }
         }
 
@@ -174,9 +258,22 @@ namespace REST_API_NeuroC_Prep.Services
             {
                 if (!_running) return null;
                 if (!_cascadeLoaded) return null;
-                if (!_backend.DetectFaces(out var result)) return null;
 
-                return ToMultiDto("face", result);
+                var sw = Stopwatch.StartNew();
+                if (!_backend.DetectFaces(out var result)) return null;
+                sw.Stop();
+
+                TrackFrame();
+                long id = ++_inspectionCounter;
+                var now = DateTime.UtcNow;
+
+                double confidence = result.count > 0
+                    ? Math.Clamp(result.count * 0.4, 0.1, 1.0) : 0;
+
+                if (result.count > 0)
+                    _lastDetection = new LastDetectionDto("face", now, confidence, sw.Elapsed.TotalMilliseconds);
+
+                return ToMultiDto("face", result, id, now, confidence);
             }
         }
 
@@ -187,9 +284,22 @@ namespace REST_API_NeuroC_Prep.Services
             lock (_lock)
             {
                 if (!_running) return null;
-                if (!_backend.DetectCircles(out var result)) return null;
 
-                return ToMultiDto("circle", result);
+                var sw = Stopwatch.StartNew();
+                if (!_backend.DetectCircles(out var result)) return null;
+                sw.Stop();
+
+                TrackFrame();
+                long id = ++_inspectionCounter;
+                var now = DateTime.UtcNow;
+
+                double confidence = result.count > 0
+                    ? Math.Clamp(result.count * 0.3, 0.1, 1.0) : 0;
+
+                if (result.count > 0)
+                    _lastDetection = new LastDetectionDto("circle", now, confidence, sw.Elapsed.TotalMilliseconds);
+
+                return ToMultiDto("circle", result, id, now, confidence);
             }
         }
 
@@ -209,23 +319,41 @@ namespace REST_API_NeuroC_Prep.Services
                         out int w, out int h))
                     return null;
 
+                TrackFrame();
+
                 return new EdgeDetectionDto(w, h, Convert.ToBase64String(edgeBuffer, 0, w * h));
             }
         }
 
         // ===== Hilfsmethoden =====
 
+        private void TrackFrame()
+        {
+            _fpsFrameCount++;
+            if (_fpsWatch.ElapsedMilliseconds >= 1000)
+            {
+                _currentFps = _fpsFrameCount / (_fpsWatch.ElapsedMilliseconds / 1000.0);
+                _fpsFrameCount = 0;
+                _fpsWatch.Restart();
+            }
+        }
+
         private static MultiDetectionDto ToMultiDto(string type,
-            NativeInterop.MultiDetectionResult result)
+            NativeInterop.MultiDetectionResult result,
+            long inspectionId, DateTime timestamp, double overallConfidence)
         {
             var items = new List<DetectionItemDto>();
             for (int i = 0; i < result.count; i++)
             {
                 var item = result.items[i];
+                // Per-Item Confidence: größere Box → höheres Vertrauen
+                double itemConf = Math.Clamp((item.width * item.height) / 8000.0, 0.1, 1.0);
                 items.Add(new DetectionItemDto(i,
-                    new BoundingBoxDto(item.x, item.y, item.width, item.height)));
+                    new BoundingBoxDto(item.x, item.y, item.width, item.height),
+                    itemConf));
             }
-            return new MultiDetectionDto(type, result.count, items);
+            return new MultiDetectionDto(type, result.count, items,
+                inspectionId, timestamp, overallConfidence);
         }
 
         /// <summary>

@@ -86,11 +86,16 @@ namespace VisionClientWPF
             _source = null;
             StatusText.Text = "Gestoppt";
             PositionText.Text = "";
+            ConfidenceText.Text = "";
             FpsText.Text = "";
             NoSignalText.Text = "Kein Signal";
             NoSignalText.Visibility = Visibility.Visible;
             OverlayCanvas.Children.Clear();
             VideoImage.Source = null;
+            DiagUptimeText.Text = "Uptime: —";
+            DiagBackendText.Text = "Backend: —";
+            DiagServerFpsText.Text = "Server FPS: —";
+            DiagInspectionsText.Text = "Inspektionen: —";
         }
 
         private void ModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -117,6 +122,7 @@ namespace VisionClientWPF
             }
 
             UpdateFps();
+            UpdateDiagnostics();
         }
 
         // ===== Live-Video rendern =====
@@ -152,12 +158,14 @@ namespace VisionClientWPF
             {
                 PositionText.Text = $"Rot: X={result.Box.X} Y={result.Box.Y} " +
                                     $"({result.Box.Width}×{result.Box.Height})";
+                ConfidenceText.Text = $"Confidence: {result.Confidence:P0}";
                 if (_source.SupportsVideo)
                     DrawOverlayRect(result.Box, Brushes.Red, "Rot");
             }
             else
             {
                 PositionText.Text = "Kein rotes Objekt";
+                ConfidenceText.Text = "";
             }
         }
 
@@ -171,10 +179,12 @@ namespace VisionClientWPF
             if (result == null)
             {
                 PositionText.Text = "Gesichtserkennung nicht verfügbar";
+                ConfidenceText.Text = "";
                 return;
             }
 
             PositionText.Text = $"{result.Count} Gesicht(er) erkannt";
+            ConfidenceText.Text = result.Count > 0 ? $"Confidence: {result.Confidence:P0}" : "";
 
             if (_source.SupportsVideo)
             {
@@ -220,6 +230,7 @@ namespace VisionClientWPF
             if (result == null) return;
 
             PositionText.Text = $"{result.Count} Kreis(e) erkannt";
+            ConfidenceText.Text = result.Count > 0 ? $"Confidence: {result.Confidence:P0}" : "";
 
             if (_source.SupportsVideo)
             {
@@ -238,7 +249,7 @@ namespace VisionClientWPF
             double scaleX = VideoImage.ActualWidth / bmp.PixelWidth;
             double scaleY = VideoImage.ActualHeight / bmp.PixelHeight;
 
-            double offsetX = (VideoContainer.ActualWidth - 220 - VideoImage.ActualWidth) / 2;
+            double offsetX = (VideoContainer.ActualWidth - 230 - VideoImage.ActualWidth) / 2;
             double offsetY = (VideoContainer.ActualHeight - VideoImage.ActualHeight) / 2;
             if (offsetX < 0) offsetX = 0;
             if (offsetY < 0) offsetY = 0;
@@ -314,6 +325,28 @@ namespace VisionClientWPF
                 _frameCount = 0;
                 _fpsWatch.Restart();
             }
+        }
+
+        // ===== Runtime-Diagnose =====
+
+        private void UpdateDiagnostics()
+        {
+            if (_source == null || !_source.SupportsDiagnostics)
+            {
+                DiagUptimeText.Text = "Uptime: n/a";
+                DiagBackendText.Text = "Backend: n/a";
+                DiagServerFpsText.Text = "Server FPS: n/a";
+                DiagInspectionsText.Text = "Inspektionen: n/a";
+                return;
+            }
+
+            var diag = _source.GetDiagnostics();
+            if (diag == null) return;
+
+            DiagUptimeText.Text = $"Uptime: {diag.Uptime}";
+            DiagBackendText.Text = $"Backend: {diag.BackendMode}";
+            DiagServerFpsText.Text = $"Server FPS: {diag.CurrentFps:F1}";
+            DiagInspectionsText.Text = $"Inspektionen: {diag.TotalInspections}";
         }
     }
 }

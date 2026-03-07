@@ -5,26 +5,28 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="VisionBridge — OPC-UA Client Simulator (PLC/Sortierlogik)"
-        Height="620" Width="860"
+        Height="780" Width="920"
         Background="#1a1a2e">
     <Grid Margin="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Connection -->
-        <Border Grid.Row="0" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+        <!-- Row 0: Connection -->
+        <Border Grid.Row="0" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="Endpoint:" Foreground="#ccc" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="TxtEndpoint" Width="350" Text="opc.tcp://localhost:4840/visionbridge"
+                <TextBox x:Name="TxtEndpoint" Width="340" Text="opc.tcp://localhost:4840/visionbridge"
                          Background="#3a3a4d" Foreground="White" BorderBrush="#555" Padding="6,4"/>
-                <Button x:Name="BtnConnect" Content="Verbinden" Margin="12,0,0,0" Padding="16,6"
+                <Button x:Name="BtnConnect" Content="Verbinden" Margin="12,0,0,0" Padding="14,6"
                         Background="#27ae60" Foreground="White" Click="BtnConnect_Click"
                         FontWeight="Bold" BorderThickness="0"/>
-                <Button x:Name="BtnDisconnect" Content="Trennen" Margin="8,0,0,0" Padding="16,6"
+                <Button x:Name="BtnDisconnect" Content="Trennen" Margin="8,0,0,0" Padding="14,6"
                         Background="#c0392b" Foreground="White" Click="BtnDisconnect_Click"
                         FontWeight="Bold" BorderThickness="0" IsEnabled="False"/>
                 <Ellipse x:Name="StatusDot" Width="14" Height="14" Fill="#c0392b" Margin="16,0,8,0"
@@ -34,8 +36,8 @@
             </StackPanel>
         </Border>
 
-        <!-- OPC-UA Node Values -->
-        <Border Grid.Row="1" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+        <!-- Row 1: OPC-UA Node Values -->
+        <Border Grid.Row="1" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -44,35 +46,98 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Camera -->
                 <StackPanel Grid.Column="0" Margin="8,0">
                     <TextBlock Text="📷 Kamera" Foreground="#6c5ce7" FontWeight="Bold" FontSize="14"/>
                     <TextBlock x:Name="TxtCameraRunning" Text="Running: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="▶ Start" Padding="8,3" Margin="0,0,4,0" FontSize="11"
+                                Background="#27ae60" Foreground="White" BorderThickness="0"
+                                Click="BtnCameraStart_Click"/>
+                        <Button Content="■ Stop" Padding="8,3" FontSize="11"
+                                Background="#c0392b" Foreground="White" BorderThickness="0"
+                                Click="BtnCameraStop_Click"/>
+                    </StackPanel>
                 </StackPanel>
 
-                <!-- Color -->
                 <StackPanel Grid.Column="1" Margin="8,0">
                     <TextBlock Text="🔴 Farbe" Foreground="#e74c3c" FontWeight="Bold" FontSize="14"/>
                     <TextBlock x:Name="TxtColorDetected" Text="Detected: —" Foreground="#ccc" Margin="0,4,0,0"/>
                     <TextBlock x:Name="TxtColorBox" Text="Box: —" Foreground="#999" FontSize="11"/>
+                    <TextBlock x:Name="TxtColorConf" Text="Confidence: —" Foreground="#888" FontSize="11"/>
                 </StackPanel>
 
-                <!-- Faces -->
                 <StackPanel Grid.Column="2" Margin="8,0">
                     <TextBlock Text="👤 Gesichter" Foreground="#f39c12" FontWeight="Bold" FontSize="14"/>
                     <TextBlock x:Name="TxtFaceCount" Text="Count: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="TxtFaceConf" Text="Confidence: —" Foreground="#888" FontSize="11"/>
                 </StackPanel>
 
-                <!-- Circles -->
                 <StackPanel Grid.Column="3" Margin="8,0">
                     <TextBlock Text="⭕ Kreise" Foreground="#3498db" FontWeight="Bold" FontSize="14"/>
                     <TextBlock x:Name="TxtCircleCount" Text="Count: —" Foreground="#ccc" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="TxtCircleConf" Text="Confidence: —" Foreground="#888" FontSize="11"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Sorting Decision Log -->
-        <Border Grid.Row="2" Background="#2d2d3d" CornerRadius="8" Padding="12">
+        <!-- Row 2: Plant Control (writable via OPC-UA) -->
+        <Border Grid.Row="2" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="⚙ Anlagen-Steuerung (OPC-UA Write)" Foreground="#6c5ce7"
+                           FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Margin="8,0">
+                        <TextBlock Text="Förderband (m/s)" Foreground="#ccc" FontSize="12" Margin="0,0,0,4"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="SliderSpeed" Width="130" Minimum="0" Maximum="5"
+                                    Value="1.2" TickFrequency="0.1"
+                                    ValueChanged="SliderSpeed_ValueChanged"/>
+                            <TextBlock x:Name="TxtSpeedValue" Text="1.2" Foreground="#eee"
+                                       FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Margin="8,0">
+                        <TextBlock Text="Inspektion" Foreground="#ccc" FontSize="12" Margin="0,0,0,4"/>
+                        <CheckBox x:Name="ChkInspection" Content="Aktiviert" Foreground="#ccc"
+                                  IsChecked="True" Click="ChkInspection_Click"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Margin="8,0">
+                        <TextBlock Text="Ausschleusweiche" Foreground="#ccc" FontSize="12" Margin="0,0,0,4"/>
+                        <CheckBox x:Name="ChkRejectGate" Content="Geöffnet" Foreground="#ccc"
+                                  IsChecked="False" Click="ChkRejectGate_Click"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Row 3: Diagnostics -->
+        <Border Grid.Row="3" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="📊 Runtime-Diagnose" Foreground="#6c5ce7"
+                           FontWeight="Bold" FontSize="14" Margin="0,0,0,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="TxtDiagUptime" Text="Uptime: —" Foreground="#ccc"
+                               FontSize="12" Margin="0,0,20,0"/>
+                    <TextBlock x:Name="TxtDiagBackend" Text="Backend: —" Foreground="#ccc"
+                               FontSize="12" Margin="0,0,20,0"/>
+                    <TextBlock x:Name="TxtDiagFps" Text="FPS: —" Foreground="#ccc"
+                               FontSize="12" Margin="0,0,20,0"/>
+                    <TextBlock x:Name="TxtDiagInspections" Text="Inspektionen: —" Foreground="#ccc"
+                               FontSize="12"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Row 4: Sorting Decision Log -->
+        <Border Grid.Row="4" Background="#2d2d3d" CornerRadius="8" Padding="12">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Top" Text="Sortierlogik — Entscheidungsprotokoll"
                            Foreground="#6c5ce7" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
@@ -82,8 +147,8 @@
             </DockPanel>
         </Border>
 
-        <!-- Current Decision -->
-        <Border Grid.Row="3" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,12,0,0">
+        <!-- Row 5: Current Decision -->
+        <Border Grid.Row="5" Background="#2d2d3d" CornerRadius="8" Padding="12" Margin="0,10,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                 <TextBlock Text="Aktuelle Entscheidung:" Foreground="#ccc" FontSize="16"
                            VerticalAlignment="Center" Margin="0,0,12,0"/>

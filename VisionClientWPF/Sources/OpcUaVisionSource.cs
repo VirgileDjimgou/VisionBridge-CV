@@ -7,7 +7,8 @@ namespace VisionClientWPF.Sources;
 
 /// <summary>
 /// Vision-Daten über OPC-UA Subscription.
-/// Kein Video — nur skalare Erkennungswerte (X, Y, Count, Detected).
+/// Kein Video — nur skalare Erkennungswerte (X, Y, Count, Detected, Confidence).
+/// Liest auch Diagnostik-Knoten (Uptime, FPS, Backend, Inspektionszähler).
 /// Setzt voraus, dass der VisionBridge Runtime (OPC-UA Server) läuft.
 /// </summary>
 public class OpcUaVisionSource : IVisionSource
@@ -15,17 +16,25 @@ public class OpcUaVisionSource : IVisionSource
     public string Name => "OPC-UA";
     public bool SupportsVideo => false;
     public bool SupportsEdgeDetection => false;
+    public bool SupportsDiagnostics => true;
 
     private readonly string _endpointUrl;
     private Session? _session;
     private ushort _nsIndex = 2;
 
-    // Gecachte Werte (von Read aktualisiert)
+    // Gecachte Werte
     private bool _cameraRunning;
     private bool _colorDetected;
     private int _colorX, _colorY, _colorW, _colorH;
+    private double _colorConfidence;
     private int _faceCount;
+    private double _faceConfidence;
     private int _circleCount;
+    private double _circleConfidence;
+    private string _diagUptime = "";
+    private string _diagBackend = "";
+    private long _diagInspections;
+    private double _diagFps;
     private DateTime _lastRead = DateTime.MinValue;
 
     public OpcUaVisionSource(string endpointUrl = "opc.tcp://localhost:4840/visionbridge")
@@ -90,7 +99,6 @@ public class OpcUaVisionSource : IVisionSource
                     "VisionWPFClient", 60000,
                     new UserIdentity(new AnonymousIdentityToken()), null);
 
-                // Namespace-Index ermitteln
                 int idx = _session.NamespaceUris.GetIndex("urn:visionbridge:opcua");
                 if (idx >= 0) _nsIndex = (ushort)idx;
 
@@ -114,10 +122,6 @@ public class OpcUaVisionSource : IVisionSource
         _session = null;
     }
 
-    /// <summary>
-    /// Liest alle OPC-UA Knoten in einem einzigen Read-Aufruf.
-    /// Wird max. alle 200ms ausgeführt (OPC-UA Update-Rate = 250ms).
-    /// </summary>
     private void ReadAllValues()
     {
         if (_session == null || !_session.Connected) return;
@@ -127,6 +131,7 @@ public class OpcUaVisionSource : IVisionSource
         {
             var nodesToRead = new ReadValueIdCollection
             {
+                // Detection (0-7)
                 new() { NodeId = new NodeId("Camera.Running", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Color.Detected", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Color.X", _nsIndex), AttributeId = Attributes.Value },
@@ -135,11 +140,20 @@ public class OpcUaVisionSource : IVisionSource
                 new() { NodeId = new NodeId("Color.Height", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Faces.Count", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Circles.Count", _nsIndex), AttributeId = Attributes.Value },
+                // Confidence (8-10)
+                new() { NodeId = new NodeId("Color.Confidence", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Faces.Confidence", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Circles.Confidence", _nsIndex), AttributeId = Attributes.Value },
+                // Diagnostics (11-14)
+                new() { NodeId = new NodeId("Diagnostics.Uptime", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Diagnostics.BackendMode", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Diagnostics.TotalInspections", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Diagnostics.CurrentFps", _nsIndex), AttributeId = Attributes.Value },
             };
 
             _session.Read(null, 0, TimestampsToReturn.Neither, nodesToRead, out var results, out _);
 
-            if (results.Count >= 8)
+            if (results.Count >= 15)
             {
                 _cameraRunning = GetBool(results, 0);
                 _colorDetected = GetBool(results, 1);
@@ -149,6 +163,13 @@ public class OpcUaVisionSource : IVisionSource
                 _colorH = GetInt(results, 5);
                 _faceCount = GetInt(results, 6);
                 _circleCount = GetInt(results, 7);
+                _colorConfidence = GetDouble(results, 8);
+                _faceConfidence = GetDouble(results, 9);
+                _circleConfidence = GetDouble(results, 10);
+                _diagUptime = GetString(results, 11);
+                _diagBackend = GetString(results, 12);
+                _diagInspections = GetLong(results, 13);
+                _diagFps = GetDouble(results, 14);
             }
 
             _lastRead = DateTime.UtcNow;
@@ -162,40 +183,63 @@ public class OpcUaVisionSource : IVisionSource
     {
         ReadAllValues();
         if (!_cameraRunning) return null;
-        return new ColorResult(_colorDetected, new DetectionBox(_colorX, _colorY, _colorW, _colorH));
+        return new ColorResult(_colorDetected,
+            new DetectionBox(_colorX, _colorY, _colorW, _colorH),
+            _colorConfidence);
     }
 
     public MultiResult? DetectFaces()
     {
         ReadAllValues();
         if (!_cameraRunning) return null;
-        return new MultiResult(_faceCount, []);
+        return new MultiResult(_faceCount, [], _faceConfidence);
     }
 
     public MultiResult? DetectCircles()
     {
         ReadAllValues();
         if (!_cameraRunning) return null;
-        return new MultiResult(_circleCount, []);
+        return new MultiResult(_circleCount, [], _circleConfidence);
     }
 
     public EdgeResult? DetectEdges() => null;
 
-    public void Dispose() => Stop();
-
-    private static bool GetBool(DataValueCollection results, int index)
+    public RuntimeDiagnostics? GetDiagnostics()
     {
-        if (index >= results.Count) return false;
-        var dv = results[index];
-        if (StatusCode.IsBad(dv.StatusCode)) return false;
-        return Convert.ToBoolean(dv.Value);
+        ReadAllValues();
+        return new RuntimeDiagnostics(_diagUptime, _diagBackend, _cameraRunning,
+            _diagInspections, _diagFps);
     }
 
-    private static int GetInt(DataValueCollection results, int index)
+    public void Dispose() => Stop();
+
+    private static bool GetBool(DataValueCollection r, int i)
     {
-        if (index >= results.Count) return 0;
-        var dv = results[index];
-        if (StatusCode.IsBad(dv.StatusCode)) return 0;
-        return Convert.ToInt32(dv.Value);
+        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return false;
+        return Convert.ToBoolean(r[i].Value);
+    }
+
+    private static int GetInt(DataValueCollection r, int i)
+    {
+        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return 0;
+        return Convert.ToInt32(r[i].Value);
+    }
+
+    private static double GetDouble(DataValueCollection r, int i)
+    {
+        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return 0;
+        return Convert.ToDouble(r[i].Value);
+    }
+
+    private static long GetLong(DataValueCollection r, int i)
+    {
+        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return 0;
+        return Convert.ToInt64(r[i].Value);
+    }
+
+    private static string GetString(DataValueCollection r, int i)
+    {
+        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return "";
+        return r[i].Value?.ToString() ?? "";
     }
 }

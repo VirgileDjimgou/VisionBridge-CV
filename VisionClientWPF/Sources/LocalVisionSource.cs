@@ -11,6 +11,7 @@ public class LocalVisionSource : IVisionSource
     public string Name => "Lokal (P/Invoke)";
     public bool SupportsVideo => true;
     public bool SupportsEdgeDetection => true;
+    public bool SupportsDiagnostics => false;
 
     private byte[]? _frameBuffer;
 
@@ -100,6 +101,8 @@ public class LocalVisionSource : IVisionSource
 
         return new EdgeResult(w, h, edgeBuffer);
     }
+
+    public RuntimeDiagnostics? GetDiagnostics() => null;
 
     public void Dispose() => Stop();
 }
