@@ -34,10 +34,14 @@ The Runtime also exposes **plant control** nodes (conveyor speed, inspection tog
 that OPC-UA clients can **write** to, plus OPC-UA **Methods** to start/stop the camera remotely.
 A **diagnostics** endpoint (REST + OPC-UA) reports uptime, FPS, backend mode, and inspection counters.
 
-There's also a **WPF client** that can switch between three data sources at runtime: direct P/Invoke
-to the DLL (fastest, ~30fps), HTTP to the REST API (~5fps with Base64 frames), or OPC-UA
-(no video, just scalar detection values). Same UI code for all three, abstracted behind an `IVisionSource` interface.
-The sidebar shows confidence scores and, for REST/OPC-UA sources, live runtime diagnostics.
+There's a **unified WPF client** that merges the vision lab and the PLC/sorting simulator into a
+single two-column interface. The left panel shows live video with bounding-box overlays (when the source
+supports it), while the right panel displays detection values, plant controls, and sorting decisions.
+You pick one of three data sources at runtime — direct P/Invoke to the DLL (fastest, ~30 fps), HTTP
+to the REST API (~5 fps with Base64 frames), or OPC-UA (no video, just scalar values). All three are
+abstracted behind an `IVisionSource` interface. An optional `IPlantControl` interface lets the OPC-UA
+and REST sources write back to the server (conveyor speed, inspection toggle, reject gate, camera
+start/stop), turning the demo into a full bidirectional industrial loop from a single window.
 
 
 ## Architecture
@@ -62,19 +66,17 @@ graph LR
 
     subgraph CLIENTS ["Consumers"]
         direction TB
-        WPF["WPF Client\n3 modes: Local / REST / OPC-UA\nConfidence + Diagnostics"]
-        PLCSIM["OPC-UA Client Simulator\nSortierlogik + Anlagen-Steuerung\nMethods + Write + Diagnostics"]
+        UNIFIED["Unified WPF Client\nVision Lab + SPS-Sortierlogik\n3 modes: Local / REST / OPC-UA\nIPlantControl + IVisionSource"]
         UAEXP["UaExpert\nor any OPC-UA client"]
         WEB["Web / Cloud"]
     end
 
     CAM --> BACKEND
-    REST -- "HTTP/JSON" --> WPF
+    REST -- "HTTP/JSON" --> UNIFIED
     REST -- "HTTP/JSON" --> WEB
-    OPC -- "OPC-UA\nread + write + call" --> WPF
-    OPC -- "OPC-UA\nread + write + call" --> PLCSIM
+    OPC -- "OPC-UA\nread + write + call" --> UNIFIED
     OPC -- "OPC-UA" --> UAEXP
-    BACKEND -. "P/Invoke direct\nstandalone mode" .-> WPF
+    BACKEND -. "P/Invoke direct\nstandalone mode" .-> UNIFIED
 
     style RUNTIME fill:#1a1a2e,stroke:#e74c3c,color:#fff
     style CLIENTS fill:#2d2d3d,stroke:#6c5ce7,color:#fff
@@ -149,58 +151,50 @@ Objects/Vision
 ```
 
 
-### VisionClientWPF
+### Unified WPF Client (OPC-UA_ClientSimulator)
 
-The WPF desktop client. You pick a data source from a dropdown and hit Start:
+This project merges the former **VisionClientWPF** (vision lab / video rendering) and the
+**OPC-UA Client Simulator** (PLC sorting logic) into a single two-column WPF application.
 
-| Source | Video | Detection | Confidence | Diagnostics | Latency | When to use |
-|--------|:-----:|:---------:|:----------:|:-----------:|:-------:|-------------|
-| Lokal (P/Invoke) | 30 FPS | All 4 modes | — | — | ~1ms | DLL on same machine, no server needed |
-| REST API | ~5 FPS | All 4 modes | ✅ | ✅ | ~10ms | Runtime is running somewhere |
-| OPC-UA | None | Scalar values | ✅ | ✅ | ~250ms | Industrial monitoring scenario |
+**Layout:**
 
-The three sources implement an `IVisionSource` interface so the MainWindow code doesn't care
-which one is active. It just calls `DetectColor()`, `GetFrameRgb()` etc. and renders whatever comes back.
+| Area | Content |
+|------|--------|
+| **Left panel** — Vision Lab | Live video + overlay canvas (bounding boxes, ellipses), detection mode selector (Color / Face / Edge / Circle), FPS counter |
+| **Right panel** — SPS / Steuerung | Detection values (camera status, color, faces, circles with confidence), plant control (conveyor speed, inspection, reject gate), current sorting decision + statistics |
+| **Bottom bar** | Runtime diagnostics (uptime, backend, server FPS, inspections) + sorting log |
 
-The sidebar now shows:
-- **Confidence score** for each detection (color, face, circle)
-- **Runtime diagnostics** panel (uptime, backend mode, server FPS, inspection count) — available
-  when using REST API or OPC-UA sources
+**Data sources** — pick one from the dropdown and hit Start:
 
-The UI renders frames as `BitmapSource` (RGB24), draws bounding boxes and ellipses on a Canvas overlay,
-and shows FPS + detection results in the sidebar.
+| Source | Video | Detection | Plant Control | Diagnostics | Latency |
+|--------|:-----:|:---------:|:-------------:|:-----------:|:-------:|
+| Lokal (P/Invoke) | 30 FPS | All 4 modes | — | — | ~1ms |
+| REST API (HTTP) | ~5 FPS | All 4 modes | ✅ via REST | ✅ | ~10ms |
+| OPC-UA | — | Scalar values | ✅ via Write + Methods | ✅ | ~250ms |
 
+All three sources implement `IVisionSource`. Sources that support bidirectional control also
+implement `IPlantControl` — the plant control panel and camera start/stop buttons appear
+automatically when the active source supports it.
 
-### OPC-UA_ClientSimulator
+**`IPlantControl` capabilities (OPC-UA + REST):**
 
-WPF app that simulates a PLC or robot controller. Connects to the VisionBridge Runtime via OPC-UA
-and makes sorting decisions based on detection results in real time.
+| Feature | OPC-UA | REST |
+|---------|--------|------|
+| Start/Stop camera | Method call (`Camera.Start()` / `Camera.Stop()`) | `POST /api/camera/start\|stop` |
+| Set conveyor speed | Write to `Control/ConveyorSpeed` | `POST /api/plant/conveyor-speed` |
+| Toggle inspection | Write to `Control/InspectionEnabled` | `POST /api/plant/inspection` |
+| Reject gate control | Write to `Control/RejectGateOpen` | `POST /api/plant/reject-gate` |
 
-**Bidirectional features:**
+**Sorting logic** — runs on every source (not just OPC-UA), throttled to ~2 Hz for fast sources:
 
-| Feature | How |
-|---------|-----|
-| Start/Stop camera | OPC-UA Method calls (`Camera.Start()` / `Camera.Stop()`) |
-| Set conveyor speed | OPC-UA Write to `Control/ConveyorSpeed` (slider, 0–5 m/s) |
-| Toggle inspection | OPC-UA Write to `Control/InspectionEnabled` (checkbox) |
-| Reject gate control | OPC-UA Write to `Control/RejectGateOpen` (auto on defect) |
-| Read diagnostics | OPC-UA Read from `Diagnostics/Uptime`, `CurrentFps`, etc. |
+| Condition | Action |
+|---|---|
+| `Faces.Count > 0` | 🛑 **HALT** — safety stop |
+| `Color.Detected` + `Confidence > 30%` | ⚠ **REJECT** — sort out + auto-open reject gate |
+| `Circles.Count ≥ 3` | ✅ **QUALITY OK** — pass through |
 
-The sorting logic follows industrial priorities and now uses **confidence scores**:
-
-| OPC-UA Node | Rule | Action |
-|---|---|---|
-| `Faces/Count > 0` | Face detected in frame | 🛑 **HALT** — stop inspection station (safety) |
-| `Color/Detected = true` + `Confidence > 30%` | Red object with sufficient confidence | ⚠ **REJECT** — sort out + open reject gate |
-| `Circles/Count ≥ 3` | Enough drill holes | ✅ **QUALITY OK** — pass through |
-
-When a defect is detected, the simulator **automatically opens the reject gate** via OPC-UA Write
-and closes it again when the defect clears. This completes the bidirectional industrial demo loop:
-camera → detection → OPC-UA → PLC decision → actuator command back via OPC-UA.
-
-The dashboard now also shows:
-- Confidence values for each detection type
-- Runtime diagnostics (uptime, backend, FPS, total inspections)
+When a defect is detected, the reject gate opens automatically via `IPlantControl`
+and closes again when the defect clears.
 
 
 ### OPC-UA_Server (deprecated)
@@ -215,7 +209,7 @@ as a hosted service, so this project is basically dead code at this point.
 |-------|------|
 | Vision engine | C++17, OpenCV 4.x, Windows DLL (`__declspec(dllexport)`), `std::thread` / `std::mutex` |
 | Runtime | ASP.NET Core 8, OPC Foundation .NET Standard SDK, Swagger |
-| WPF client | .NET 8, WPF, P/Invoke, OPC-UA Client SDK, `DispatcherTimer` |
+| Unified WPF client | .NET 8, WPF, P/Invoke, OPC-UA Client SDK, `DispatcherTimer`, `IVisionSource` / `IPlantControl` |
 | Interop | `extern "C"`, `DllImport` with `CallingConvention.Cdecl`, manual struct marshalling |
 | Protocols | HTTP/JSON, OPC-UA binary over TCP (read + write + method calls) |
 
@@ -248,18 +242,15 @@ NeuroC_ComVision/
 │       ├── VisionOpcUaServer.cs
 │       └── OpcUaHostedService.cs
 │
-├── VisionClientWPF/               # Desktop client
-│   ├── MainWindow.xaml / .cs      # + Confidence display + Diagnostics panel
-│   ├── VisionInterop.cs           # P/Invoke (for local mode)
+├── OPC-UA_ClientSimulator/        # Unified WPF Client (Vision Lab + SPS-Sortierlogik)
+│   ├── MainWindow.xaml            # Two-column layout: video + controls
+│   ├── MainWindow.xaml.cs         # Unified logic: rendering + detection + sorting
+│   ├── VisionInterop.cs           # P/Invoke for local mode
 │   └── Sources/
-│       ├── IVisionSource.cs       # Interface + result types (+ Confidence + Diagnostics)
-│       ├── LocalVisionSource.cs   # P/Invoke
-│       ├── RestVisionSource.cs    # HTTP (+ Diagnostics endpoint)
-│       └── OpcUaVisionSource.cs   # OPC-UA (+ Confidence + Diagnostics nodes)
-│
-├── OPC-UA_ClientSimulator/        # PLC/sorting logic simulator
-│   ├── MainWindow.xaml            # Dashboard + Plant Control + Diagnostics panels
-│   └── MainWindow.xaml.cs         # OPC-UA client + Methods + Write + sorting rules
+│       ├── IVisionSource.cs       # IVisionSource + IPlantControl interfaces + result types
+│       ├── LocalVisionSource.cs   # P/Invoke (video + detection, no plant control)
+│       ├── RestVisionSource.cs    # HTTP + IPlantControl via REST
+│       └── OpcUaVisionSource.cs   # OPC-UA + IPlantControl via Write/Methods
 │
 └── OPC-UA_Server/                 # Deprecated
 ```
@@ -273,19 +264,19 @@ on the command line), then start `REST_API_NeuroC_Prep`. The API generates synth
 a red object moving on a simulated conveyor belt, cycling face/circle counts. All endpoints work
 identically to the real camera mode. This is the easiest way to explore the project without any hardware.
 
-**Just the WPF client:**
-Set the source to "Lokal (P/Invoke)" and click Start. You need the DLL in the output directory.
+**Just the local camera (no server needed):**
+Start `OPC-UA_ClientSimulator`, pick "Lokal (P/Invoke)" and click Start.
+You need the DLL in the output directory. Video + detection + sorting logic work standalone.
 
-**The full industrial loop (with OPC-UA Client Simulator):**
+**The full industrial loop:**
 1. Start `REST_API_NeuroC_Prep` (launches REST API + OPC-UA server in one process)
-2. Go to `https://localhost:7158/swagger` and call `POST /api/camera/start`
-   — or use the PLC Simulator's "▶ Start" button (calls `Camera.Start()` via OPC-UA Method)
-3. Start `OPC-UA_ClientSimulator` and click "Verbinden"
-4. Watch sorting decisions with confidence scores in real time
-5. Adjust conveyor speed with the slider — the value is written to the server via OPC-UA
-6. Observe the reject gate auto-opening when defects are detected
-7. Check the diagnostics panel for uptime, FPS, and inspection count
-8. Start `VisionClientWPF`, pick "REST API" or "OPC-UA" — see confidence + diagnostics in sidebar
+2. Start `OPC-UA_ClientSimulator`
+3. Pick "OPC-UA" (or "REST API") from the source dropdown and click **▶ Start**
+4. The plant control panel appears automatically — adjust conveyor speed, toggle inspection
+5. Use the **▶ Kamera / ■ Kamera** buttons to start/stop the camera remotely
+6. Watch sorting decisions + confidence scores in real time on the right panel
+7. Observe the reject gate auto-opening when a red defect is detected
+8. Switch to "REST API" to see live video *and* plant control at the same time
 9. Or connect UaExpert to `opc.tcp://localhost:4840/visionbridge` to browse all nodes
 10. Try `GET /api/diagnostics` or `GET /api/plant` in Swagger
 
@@ -313,8 +304,13 @@ Some of the things I worked through:
 * Embedding OPC-UA inside an ASP.NET Core process as an `IHostedService`
 * Why industrial systems typically run OPC-UA and REST side by side (not one or the other)
 * Abstracting over three completely different data sources behind one interface
+* Separating read-only data (`IVisionSource`) from actuator commands (`IPlantControl`) with
+  optional interface implementation — the UI adapts automatically to the source's capabilities
 * Dependency injection of hardware backends (`IVisionBackend`) for testability without physical devices
-* Simulating a PLC sorting loop that consumes OPC-UA nodes and makes real-time decisions
+* Merging two WPF apps into one coherent HMI that works in all three modes, with the plant
+  control panel appearing only when the active source supports it
+* Simulating a PLC sorting loop that consumes detection data and makes real-time decisions,
+  regardless of whether the data comes from P/Invoke, REST, or OPC-UA
 * **Bidirectional OPC-UA**: writable nodes (`OnSimpleWriteValue` callbacks), OPC-UA Methods, and
   how a PLC client can both read detection data and write control commands back to the server
 * **Industrial traceability**: adding inspection IDs, timestamps, and confidence scores to every detection

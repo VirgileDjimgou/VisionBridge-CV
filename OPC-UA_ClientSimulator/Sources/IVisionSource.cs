@@ -1,4 +1,4 @@
-namespace VisionClientWPF.Sources;
+namespace OPC_UA_ClientSimulator.Sources;
 
 // Gemeinsame Ergebnistypen für alle Vision-Quellen
 
@@ -12,13 +12,9 @@ public record MultiResult(int Count, DetectionBox[] Items, double Confidence = 0
 
 public record EdgeResult(int Width, int Height, byte[] Data);
 
-/// <summary>Runtime-Diagnose (von REST oder OPC-UA).</summary>
 public record RuntimeDiagnostics(
-    string Uptime,
-    string BackendMode,
-    bool CameraRunning,
-    long TotalInspections,
-    double CurrentFps);
+    string Uptime, string BackendMode, bool CameraRunning,
+    long TotalInspections, double CurrentFps);
 
 /// <summary>
 /// Abstraktion über verschiedene Vision-Datenquellen.
@@ -40,4 +36,19 @@ public interface IVisionSource : IDisposable
     MultiResult? DetectCircles();
     EdgeResult? DetectEdges();
     RuntimeDiagnostics? GetDiagnostics();
+}
+
+/// <summary>
+/// Optionale Schnittstelle für Anlagen-Steuerung.
+/// Implementiert von OPC-UA- und REST-Quellen.
+/// Erlaubt Kamera-Steuerung, Förderband-Geschwindigkeit,
+/// Inspektions-Toggle und Ausschleusweiche.
+/// </summary>
+public interface IPlantControl
+{
+    void SetConveyorSpeed(double speed);
+    void SetInspectionEnabled(bool enabled);
+    void SetRejectGateOpen(bool open);
+    void CameraStart();
+    void CameraStop();
 }

@@ -1,14 +1,15 @@
 using System.Net.Http;
 using System.Text.Json;
 
-namespace VisionClientWPF.Sources;
+namespace OPC_UA_ClientSimulator.Sources;
 
 /// <summary>
 /// Vision-Daten über die REST API (HTTP/JSON).
 /// Video via Base64-Frames (~5 FPS), alle Erkennungsmodi verfügbar.
-/// Setzt voraus, dass der VisionBridge Runtime (REST API) läuft.
+/// Implementiert IPlantControl über die REST-Endpunkte
+/// (/api/plant/*, /api/camera/*).
 /// </summary>
-public class RestVisionSource : IVisionSource
+public class RestVisionSource : IVisionSource, IPlantControl
 {
     public string Name => "REST API (HTTP)";
     public bool SupportsVideo => true;
@@ -79,7 +80,6 @@ public class RestVisionSource : IVisionSource
     }
 
     public MultiResult? DetectFaces() => GetMulti("api/detection/faces");
-
     public MultiResult? DetectCircles() => GetMulti("api/detection/circles");
 
     public EdgeResult? DetectEdges()
@@ -96,78 +96,6 @@ public class RestVisionSource : IVisionSource
         catch { return null; }
     }
 
-    public void Dispose() => _http.Dispose();
-
-    // Gemeinsame Multi-Erkennung (Gesichter, Kreise)
-    private MultiResult? GetMulti(string endpoint)
-    {
-        try
-        {
-            var json = Task.Run(() => _http.GetStringAsync(endpoint)).Result;
-            var r = JsonSerializer.Deserialize<MultiDto>(json, JsonOpts);
-            if (r == null) return null;
-
-            var items = r.Detections?
-                .Select(d => new DetectionBox(d.BoundingBox.X, d.BoundingBox.Y,
-                                              d.BoundingBox.Width, d.BoundingBox.Height))
-                .ToArray() ?? [];
-
-            return new MultiResult(r.Count, items, r.Confidence);
-        }
-        catch { return null; }
-    }
-
-    // JSON-Antwortmodelle (Spiegel der REST API DTOs)
-    private class FrameDto
-    {
-        public int Width { get; set; }
-        public int Height { get; set; }
-        public string? Base64Data { get; set; }
-    }
-
-    private class ColorDto
-    {
-        public bool Detected { get; set; }
-        public BoxDto? BoundingBox { get; set; }
-        public double Confidence { get; set; }
-    }
-
-    private class BoxDto
-    {
-        public int X { get; set; }
-        public int Y { get; set; }
-        public int Width { get; set; }
-        public int Height { get; set; }
-    }
-
-    private class MultiDto
-    {
-        public int Count { get; set; }
-        public double Confidence { get; set; }
-        public DetectionItemDto[]? Detections { get; set; }
-    }
-
-    private class DetectionItemDto
-    {
-        public BoxDto BoundingBox { get; set; } = new();
-    }
-
-    private class EdgeDto
-    {
-        public int Width { get; set; }
-        public int Height { get; set; }
-        public string? Base64Data { get; set; }
-    }
-
-    private class DiagDto
-    {
-        public string Uptime { get; set; } = "";
-        public string BackendMode { get; set; } = "";
-        public bool CameraRunning { get; set; }
-        public long TotalInspections { get; set; }
-        public double CurrentFps { get; set; }
-    }
-
     public RuntimeDiagnostics? GetDiagnostics()
     {
         try
@@ -180,4 +108,66 @@ public class RestVisionSource : IVisionSource
         }
         catch { return null; }
     }
+
+    // ===== IPlantControl (via REST) =====
+
+    public void CameraStart()
+    {
+        try { Task.Run(() => _http.PostAsync("api/camera/start", null)).Wait(); }
+        catch { }
+    }
+
+    public void CameraStop()
+    {
+        try { Task.Run(() => _http.PostAsync("api/camera/stop", null)).Wait(); }
+        catch { }
+    }
+
+    public void SetConveyorSpeed(double speed)
+    {
+        try { Task.Run(() => _http.PostAsync($"api/plant/conveyor-speed?speed={speed}", null)).Wait(); }
+        catch { }
+    }
+
+    public void SetInspectionEnabled(bool enabled)
+    {
+        try { Task.Run(() => _http.PostAsync($"api/plant/inspection?enabled={enabled.ToString().ToLower()}", null)).Wait(); }
+        catch { }
+    }
+
+    public void SetRejectGateOpen(bool open)
+    {
+        try { Task.Run(() => _http.PostAsync($"api/plant/reject-gate?open={open.ToString().ToLower()}", null)).Wait(); }
+        catch { }
+    }
+
+    public void Dispose() => _http.Dispose();
+
+    // ===== Hilfsmethoden =====
+
+    private MultiResult? GetMulti(string endpoint)
+    {
+        try
+        {
+            var json = Task.Run(() => _http.GetStringAsync(endpoint)).Result;
+            var r = JsonSerializer.Deserialize<MultiDto>(json, JsonOpts);
+            if (r == null) return null;
+
+            var items = r.Detections?
+                .Select(d => new DetectionBox(d.BoundingBox.X, d.BoundingBox.Y,
+                                              d.BoundingBox.Width, d.BoundingBox.Height))
+                .ToArray() ?? [];
+            return new MultiResult(r.Count, items, r.Confidence);
+        }
+        catch { return null; }
+    }
+
+    // JSON-Antwortmodelle
+    private class FrameDto { public int Width { get; set; } public int Height { get; set; } public string? Base64Data { get; set; } }
+    private class ColorDto { public bool Detected { get; set; } public BoxDto? BoundingBox { get; set; } public double Confidence { get; set; } }
+    private class BoxDto { public int X { get; set; } public int Y { get; set; } public int Width { get; set; } public int Height { get; set; } }
+    private class MultiDto { public int Count { get; set; } public double Confidence { get; set; } public DetItemDto[]? Detections { get; set; } }
+    private class DetItemDto { public BoxDto BoundingBox { get; set; } = new(); }
+    private class EdgeDto { public int Width { get; set; } public int Height { get; set; } public string? Base64Data { get; set; } }
+    private class DiagDto { public string Uptime { get; set; } = ""; public string BackendMode { get; set; } = ""; public bool CameraRunning { get; set; } public long TotalInspections { get; set; } public double CurrentFps { get; set; } }
 }

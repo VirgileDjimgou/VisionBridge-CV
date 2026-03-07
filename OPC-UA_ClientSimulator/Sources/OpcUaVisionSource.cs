@@ -3,15 +3,14 @@ using Opc.Ua;
 using Opc.Ua.Client;
 using Opc.Ua.Configuration;
 
-namespace VisionClientWPF.Sources;
+namespace OPC_UA_ClientSimulator.Sources;
 
 /// <summary>
-/// Vision-Daten über OPC-UA Subscription.
-/// Kein Video — nur skalare Erkennungswerte (X, Y, Count, Detected, Confidence).
-/// Liest auch Diagnostik-Knoten (Uptime, FPS, Backend, Inspektionszähler).
-/// Setzt voraus, dass der VisionBridge Runtime (OPC-UA Server) läuft.
+/// Vision-Daten über OPC-UA.
+/// Kein Video — nur skalare Erkennungswerte (Detected, Count, Confidence).
+/// Implementiert IPlantControl über OPC-UA Write + Method Calls.
 /// </summary>
-public class OpcUaVisionSource : IVisionSource
+public class OpcUaVisionSource : IVisionSource, IPlantControl
 {
     public string Name => "OPC-UA";
     public bool SupportsVideo => false;
@@ -50,8 +49,8 @@ public class OpcUaVisionSource : IVisionSource
             {
                 var config = new ApplicationConfiguration
                 {
-                    ApplicationName = "VisionBridge WPF Client",
-                    ApplicationUri = Utils.Format("urn:{0}:visionbridge:wpfclient",
+                    ApplicationName = "VisionBridge Unified Client",
+                    ApplicationUri = Utils.Format("urn:{0}:visionbridge:unified",
                         System.Net.Dns.GetHostName()),
                     ApplicationType = ApplicationType.Client,
                     SecurityConfiguration = new SecurityConfiguration
@@ -60,7 +59,7 @@ public class OpcUaVisionSource : IVisionSource
                         {
                             StoreType = CertificateStoreType.Directory,
                             StorePath = Path.Combine(".", "pki", "own"),
-                            SubjectName = "CN=VisionBridge WPF Client"
+                            SubjectName = "CN=VisionBridge Unified Client"
                         },
                         TrustedIssuerCertificates = new CertificateTrustList
                         {
@@ -96,7 +95,7 @@ public class OpcUaVisionSource : IVisionSource
 
                 _session = await Session.Create(
                     config, configuredEndpoint, false,
-                    "VisionWPFClient", 60000,
+                    "VisionUnifiedClient", 60000,
                     new UserIdentity(new AnonymousIdentityToken()), null);
 
                 int idx = _session.NamespaceUris.GetIndex("urn:visionbridge:opcua");
@@ -105,22 +104,17 @@ public class OpcUaVisionSource : IVisionSource
                 return true;
             }).Result;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     public void Stop()
     {
-        try
-        {
-            _session?.Close();
-            _session?.Dispose();
-        }
+        try { _session?.Close(); _session?.Dispose(); }
         catch { }
         _session = null;
     }
+
+    // ===== IVisionSource — liest alle Knoten gebatcht =====
 
     private void ReadAllValues()
     {
@@ -131,7 +125,6 @@ public class OpcUaVisionSource : IVisionSource
         {
             var nodesToRead = new ReadValueIdCollection
             {
-                // Detection (0-7)
                 new() { NodeId = new NodeId("Camera.Running", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Color.Detected", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Color.X", _nsIndex), AttributeId = Attributes.Value },
@@ -140,37 +133,28 @@ public class OpcUaVisionSource : IVisionSource
                 new() { NodeId = new NodeId("Color.Height", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Faces.Count", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Circles.Count", _nsIndex), AttributeId = Attributes.Value },
-                // Confidence (8-10)
                 new() { NodeId = new NodeId("Color.Confidence", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Faces.Confidence", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Circles.Confidence", _nsIndex), AttributeId = Attributes.Value },
-                // Diagnostics (11-14)
                 new() { NodeId = new NodeId("Diagnostics.Uptime", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Diagnostics.BackendMode", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Diagnostics.TotalInspections", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Diagnostics.CurrentFps", _nsIndex), AttributeId = Attributes.Value },
             };
 
-            _session.Read(null, 0, TimestampsToReturn.Neither, nodesToRead, out var results, out _);
+            _session.Read(null, 0, TimestampsToReturn.Neither, nodesToRead, out var r, out _);
+            if (r.Count < 15) return;
 
-            if (results.Count >= 15)
-            {
-                _cameraRunning = GetBool(results, 0);
-                _colorDetected = GetBool(results, 1);
-                _colorX = GetInt(results, 2);
-                _colorY = GetInt(results, 3);
-                _colorW = GetInt(results, 4);
-                _colorH = GetInt(results, 5);
-                _faceCount = GetInt(results, 6);
-                _circleCount = GetInt(results, 7);
-                _colorConfidence = GetDouble(results, 8);
-                _faceConfidence = GetDouble(results, 9);
-                _circleConfidence = GetDouble(results, 10);
-                _diagUptime = GetString(results, 11);
-                _diagBackend = GetString(results, 12);
-                _diagInspections = GetLong(results, 13);
-                _diagFps = GetDouble(results, 14);
-            }
+            _cameraRunning = GetBool(r, 0);
+            _colorDetected = GetBool(r, 1);
+            _colorX = GetInt(r, 2); _colorY = GetInt(r, 3);
+            _colorW = GetInt(r, 4); _colorH = GetInt(r, 5);
+            _faceCount = GetInt(r, 6); _circleCount = GetInt(r, 7);
+            _colorConfidence = GetDouble(r, 8);
+            _faceConfidence = GetDouble(r, 9);
+            _circleConfidence = GetDouble(r, 10);
+            _diagUptime = GetString(r, 11); _diagBackend = GetString(r, 12);
+            _diagInspections = GetLong(r, 13); _diagFps = GetDouble(r, 14);
 
             _lastRead = DateTime.UtcNow;
         }
@@ -184,8 +168,7 @@ public class OpcUaVisionSource : IVisionSource
         ReadAllValues();
         if (!_cameraRunning) return null;
         return new ColorResult(_colorDetected,
-            new DetectionBox(_colorX, _colorY, _colorW, _colorH),
-            _colorConfidence);
+            new DetectionBox(_colorX, _colorY, _colorW, _colorH), _colorConfidence);
     }
 
     public MultiResult? DetectFaces()
@@ -211,35 +194,55 @@ public class OpcUaVisionSource : IVisionSource
             _diagInspections, _diagFps);
     }
 
+    // ===== IPlantControl — OPC-UA Write + Methods =====
+
+    public void CameraStart() => CallMethod("Camera", "Camera.Start");
+    public void CameraStop() => CallMethod("Camera", "Camera.Stop");
+    public void SetConveyorSpeed(double speed) => WriteValue("Control.ConveyorSpeed", speed);
+    public void SetInspectionEnabled(bool enabled) => WriteValue("Control.InspectionEnabled", enabled);
+    public void SetRejectGateOpen(bool open) => WriteValue("Control.RejectGateOpen", open);
+
+    private void WriteValue(string nodeIdentifier, object value)
+    {
+        if (_session == null || !_session.Connected) return;
+        try
+        {
+            var wv = new WriteValue
+            {
+                NodeId = new NodeId(nodeIdentifier, _nsIndex),
+                AttributeId = Attributes.Value,
+                Value = new DataValue(new Variant(value))
+            };
+            _session.Write(null, new WriteValueCollection { wv }, out _, out _);
+        }
+        catch { }
+    }
+
+    private void CallMethod(string objectId, string methodId)
+    {
+        if (_session == null || !_session.Connected) return;
+        try
+        {
+            _session.Call(
+                new NodeId(objectId, _nsIndex),
+                new NodeId(methodId, _nsIndex),
+                Array.Empty<object>());
+        }
+        catch { }
+    }
+
     public void Dispose() => Stop();
 
+    // ===== Helfer =====
+
     private static bool GetBool(DataValueCollection r, int i)
-    {
-        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return false;
-        return Convert.ToBoolean(r[i].Value);
-    }
-
+        => i < r.Count && !StatusCode.IsBad(r[i].StatusCode) && Convert.ToBoolean(r[i].Value);
     private static int GetInt(DataValueCollection r, int i)
-    {
-        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return 0;
-        return Convert.ToInt32(r[i].Value);
-    }
-
+        => i < r.Count && !StatusCode.IsBad(r[i].StatusCode) ? Convert.ToInt32(r[i].Value) : 0;
     private static double GetDouble(DataValueCollection r, int i)
-    {
-        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return 0;
-        return Convert.ToDouble(r[i].Value);
-    }
-
+        => i < r.Count && !StatusCode.IsBad(r[i].StatusCode) ? Convert.ToDouble(r[i].Value) : 0;
     private static long GetLong(DataValueCollection r, int i)
-    {
-        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return 0;
-        return Convert.ToInt64(r[i].Value);
-    }
-
+        => i < r.Count && !StatusCode.IsBad(r[i].StatusCode) ? Convert.ToInt64(r[i].Value) : 0;
     private static string GetString(DataValueCollection r, int i)
-    {
-        if (i >= r.Count || StatusCode.IsBad(r[i].StatusCode)) return "";
-        return r[i].Value?.ToString() ?? "";
-    }
+        => i < r.Count && !StatusCode.IsBad(r[i].StatusCode) ? r[i].Value?.ToString() ?? "—" : "—";
 }

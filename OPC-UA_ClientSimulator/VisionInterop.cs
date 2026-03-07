@@ -1,6 +1,6 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
-namespace VisionClientWPF
+namespace OPC_UA_ClientSimulator
 {
     public static class VisionInterop
     {
@@ -45,7 +45,7 @@ namespace VisionClientWPF
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void StopCamera();
 
-        // --- Farberkennung (bestehend) ---
+        // --- Farberkennung ---
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool GetFrame(out DetectionResult result);

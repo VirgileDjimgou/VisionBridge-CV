@@ -1,10 +1,11 @@
 using System.IO;
 
-namespace VisionClientWPF.Sources;
+namespace OPC_UA_ClientSimulator.Sources;
 
 /// <summary>
 /// P/Invoke direkt auf NeuroCComVision.dll — schnellster Zugriff, volles Video.
 /// Setzt voraus, dass die DLL lokal vorhanden ist.
+/// Keine Anlagen-Steuerung (kein IPlantControl).
 /// </summary>
 public class LocalVisionSource : IVisionSource
 {
@@ -38,7 +39,6 @@ public class LocalVisionSource : IVisionSource
             return null;
 
         int rgbSize = info.width * info.height * 3;
-
         if (_frameBuffer == null || _frameBuffer.Length < rgbSize)
             _frameBuffer = new byte[rgbSize];
 
@@ -69,7 +69,6 @@ public class LocalVisionSource : IVisionSource
             var item = result.items[i];
             items[i] = new DetectionBox(item.x, item.y, item.width, item.height);
         }
-
         return new MultiResult(result.count, items);
     }
 
@@ -84,7 +83,6 @@ public class LocalVisionSource : IVisionSource
             var item = result.items[i];
             items[i] = new DetectionBox(item.x, item.y, item.width, item.height);
         }
-
         return new MultiResult(result.count, items);
     }
 
@@ -103,6 +101,5 @@ public class LocalVisionSource : IVisionSource
     }
 
     public RuntimeDiagnostics? GetDiagnostics() => null;
-
     public void Dispose() => Stop();
 }
