@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.NetworkInformation;
 
 namespace OPC_UA_ClientSimulator.Sources;
 
@@ -15,11 +16,57 @@ public class LocalVisionSource : IVisionSource
     public bool SupportsDiagnostics => false;
 
     private byte[]? _frameBuffer;
+    private bool _started;
 
     public bool Start()
     {
-        if (!VisionInterop.StartCamera())
-            return false;
+        // 1. DLL vorhanden?
+        string dllPath = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory, "NeuroCComVision.dll");
+        if (!File.Exists(dllPath))
+            throw new FileNotFoundException(
+                "NeuroCComVision.dll wurde nicht gefunden.\n\n" +
+                "Die DLL muss im Ausgabeverzeichnis liegen,\n" +
+                "zusammen mit den OpenCV-Abhängigkeiten.");
+
+        // 2. Läuft der VisionBridge Runtime bereits? (Kamerakonflikt)
+        if (IsVisionBridgeServerRunning())
+            throw new InvalidOperationException(
+                "Der VisionBridge Runtime (REST API / OPC-UA Server) läuft bereits\n" +
+                "und belegt die Kamera.\n\n" +
+                "Optionen:\n" +
+                "• Server beenden und erneut versuchen\n" +
+                "• Quelle \"REST API\" oder \"OPC-UA\" verwenden");
+
+        // 3. Kamera öffnen (P/Invoke)
+        try
+        {
+            if (!VisionInterop.StartCamera())
+                throw new InvalidOperationException(
+                    "Die Kamera konnte nicht geöffnet werden.\n\n" +
+                    "Mögliche Ursachen:\n" +
+                    "• Keine Kamera angeschlossen\n" +
+                    "• Kamera wird von einer anderen Anwendung verwendet\n" +
+                    "• Kameratreiber nicht installiert");
+        }
+        catch (DllNotFoundException)
+        {
+            throw new FileNotFoundException(
+                "NeuroCComVision.dll konnte nicht geladen werden.\n\n" +
+                "Stellen Sie sicher, dass die DLL und alle Abhängigkeiten\n" +
+                "(OpenCV DLLs) im Ausgabeverzeichnis vorhanden sind.");
+        }
+        catch (InvalidOperationException)
+        {
+            throw; // eigene Exceptions weiterleiten
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Kamera-Initialisierung fehlgeschlagen:\n\n{ex.Message}");
+        }
+
+        _started = true;
 
         string cascadePath = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory,
@@ -31,7 +78,30 @@ public class LocalVisionSource : IVisionSource
         return true;
     }
 
-    public void Stop() => VisionInterop.StopCamera();
+    /// <summary>
+    /// Prüft ob der VisionBridge Runtime bereits auf den bekannten Ports lauscht.
+    /// Port 7158 = REST API (HTTPS), Port 4840 = OPC-UA Server.
+    /// </summary>
+    private static bool IsVisionBridgeServerRunning()
+    {
+        try
+        {
+            var listeners = IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpListeners();
+            return listeners.Any(ep => ep.Port is 7158 or 4840);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public void Stop()
+    {
+        if (!_started) return;
+        try { VisionInterop.StopCamera(); } catch (DllNotFoundException) { }
+        _started = false;
+    }
 
     public FrameResult? GetFrameRgb()
     {

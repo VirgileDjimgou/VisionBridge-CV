@@ -13,4 +13,17 @@
     <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" Version="1.5.374.126" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Native C++ DLL aus dem Build-Ordner kopieren (für Lokal/P/Invoke Modus) -->
+    <None Include="..\x64\Debug\NeuroCComVision.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>NeuroCComVision.dll</Link>
+    </None>
+    <!-- Haar-Cascade für Gesichtserkennung -->
+    <None Include="..\x64\Debug\haarcascade_frontalface_default.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>haarcascade_frontalface_default.xml</Link>
+    </None>
+  </ItemGroup>
+
 </Project>

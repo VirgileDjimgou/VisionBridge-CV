@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -91,12 +92,28 @@ namespace OPC_UA_ClientSimulator
             TxtStatus.Text = $"Verbinde ({_source.Name})...";
             StatusDot.Fill = new SolidColorBrush(Color.FromRgb(241, 196, 15));
 
-            if (!_source.Start())
+            try
             {
-                TxtStatus.Text = "Fehler";
-                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(192, 57, 43));
-                AddLog($"❌ {_source.Name}: Verbindung fehlgeschlagen");
-                MessageBox.Show($"Verbindung fehlgeschlagen.\n\nQuelle: {_source.Name}\nPrüfen Sie, ob der Dienst läuft.");
+                if (!_source.Start())
+                {
+                    SetStartError($"{_source.Name}: Verbindung fehlgeschlagen",
+                        $"Verbindung fehlgeschlagen.\n\nQuelle: {_source.Name}\nPrüfen Sie, ob der Dienst läuft.");
+                    return;
+                }
+            }
+            catch (FileNotFoundException ex)
+            {
+                SetStartError("DLL nicht gefunden", ex.Message, "DLL nicht gefunden");
+                return;
+            }
+            catch (InvalidOperationException ex)
+            {
+                SetStartError("Kamera nicht verfügbar", ex.Message, "Kamera nicht verfügbar");
+                return;
+            }
+            catch (Exception ex)
+            {
+                SetStartError("Startfehler", ex.Message, "Fehler");
                 return;
             }
 
@@ -566,6 +583,16 @@ namespace OPC_UA_ClientSimulator
         }
 
         // ===== Log =====
+
+        private void SetStartError(string logMessage, string userMessage, string title = "Fehler")
+        {
+            TxtStatus.Text = "Fehler";
+            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(192, 57, 43));
+            AddLog($"❌ {logMessage}");
+            _source?.Dispose();
+            _source = null;
+            MessageBox.Show(userMessage, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
 
         private void AddLog(string message)
         {
