@@ -29,6 +29,11 @@ namespace REST_API_NeuroC_Prep.Services
         private double _currentFps;
         private LastDetectionDto? _lastDetection;
 
+        // ===== Bottle inspection cache (100 ms) =====
+        private BottleInspectionDto? _bottleCache;
+        private DateTime _bottleCacheTime = DateTime.MinValue;
+        private static readonly TimeSpan BottleCacheTtl = TimeSpan.FromMilliseconds(100);
+
         // ===== Anlagen-Steuerung (beschreibbar via OPC-UA oder REST) =====
         private double _conveyorSpeed = 1.2;        // m/s
         private bool _inspectionEnabled = true;
@@ -333,6 +338,11 @@ namespace REST_API_NeuroC_Prep.Services
             {
                 if (!_running) return null;
 
+                // Return cached result if it is still fresh
+                if (_bottleCache != null &&
+                    (DateTime.UtcNow - _bottleCacheTime) < BottleCacheTtl)
+                    return _bottleCache;
+
                 var sw = Stopwatch.StartNew();
                 if (!_backend.InspectBottle(out var result)) return null;
                 sw.Stop();
@@ -345,7 +355,7 @@ namespace REST_API_NeuroC_Prep.Services
                     _lastDetection = new LastDetectionDto("bottle", now,
                         result.bottleConfidence, sw.Elapsed.TotalMilliseconds);
 
-                return new BottleInspectionDto(
+                var dto = new BottleInspectionDto(
                     result.bottleDetected,
                     result.bottleDetected
                         ? new BoundingBoxDto(result.bottleX, result.bottleY,
@@ -363,6 +373,10 @@ namespace REST_API_NeuroC_Prep.Services
                     (BottleStatusEnum)result.bottleStatus,
                     result.defectCount,
                     id, now);
+
+                _bottleCache = dto;
+                _bottleCacheTime = now;
+                return dto;
             }
         }
 

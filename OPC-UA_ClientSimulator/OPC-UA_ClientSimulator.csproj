@@ -15,12 +15,13 @@
 
   <ItemGroup>
     <!-- Native C++ DLL aus dem Build-Ordner kopieren (für Lokal/P/Invoke Modus) -->
-    <None Include="..\x64\Debug\NeuroCComVision.dll">
+    <!-- Condition: nur kopieren wenn die DLL bereits gebaut wurde (C++ Projekt zuerst kompilieren) -->
+    <None Condition="Exists('../x64/Debug/NeuroCComVision.dll')" Include="..\x64\Debug\NeuroCComVision.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>NeuroCComVision.dll</Link>
     </None>
     <!-- Haar-Cascade für Gesichtserkennung -->
-    <None Include="..\x64\Debug\haarcascade_frontalface_default.xml">
+    <None Condition="Exists('../x64/Debug/haarcascade_frontalface_default.xml')" Include="..\x64\Debug\haarcascade_frontalface_default.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>haarcascade_frontalface_default.xml</Link>
     </None>

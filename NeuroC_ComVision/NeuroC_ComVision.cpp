@@ -4,8 +4,7 @@
 #include "pch.h"
 #include "NeuroC_ComVision.h"
 
-#include <opencv2/opencv.hpp>
-#include <opencv2/objdetect.hpp>
+// OpenCV and STL headers — OpenCV now included via pch.h (with warnings suppressed)
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -63,15 +62,23 @@ bool GetFrame(DetectionResult* result)
     cv::Mat hsv;
     cv::cvtColor(currentFrame, hsv, cv::COLOR_BGR2HSV);
 
+    // Red wraps around in HSV — cover both low (0-10) and high (170-180) ranges
+    cv::Mat mask1, mask2;
+    cv::inRange(hsv, cv::Scalar(0, 120, 70),   cv::Scalar(10, 255, 255), mask1);
+    cv::inRange(hsv, cv::Scalar(170, 120, 70), cv::Scalar(180, 255, 255), mask2);
     cv::Mat mask;
-    cv::inRange(hsv, cv::Scalar(0, 120, 70), cv::Scalar(10, 255, 255), mask);
+    cv::bitwise_or(mask1, mask2, mask);
 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
     if (!contours.empty())
     {
-        auto rect = cv::boundingRect(contours[0]);
+        // Pick the largest contour
+        auto largest = std::max_element(contours.begin(), contours.end(),
+            [](const std::vector<cv::Point>& a, const std::vector<cv::Point>& b)
+            { return cv::contourArea(a) < cv::contourArea(b); });
+        auto rect = cv::boundingRect(*largest);
         result->x = rect.x;
         result->y = rect.y;
         result->width = rect.width;
@@ -260,8 +267,12 @@ static bool FindGreenCap(const cv::Mat& frame,
     cv::cvtColor(frame, hsv, cv::COLOR_BGR2HSV);
 
     // Green range for the Volvic cap (tolerant for lighting conditions)
-    cv::Mat mask;
+    // Primary range: cool/daylight (H 30-90)
+    cv::Mat mask, maskWarm;
     cv::inRange(hsv, cv::Scalar(30, 50, 40), cv::Scalar(90, 255, 255), mask);
+    // Secondary range: warm/incandescent light shifts green toward yellow (H 22-42)
+    cv::inRange(hsv, cv::Scalar(22, 40, 30), cv::Scalar(50, 255, 255), maskWarm);
+    cv::bitwise_or(mask, maskWarm, mask);
 
     // Clean up noise
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
@@ -421,19 +432,25 @@ static void InferBottleRect(const cv::Mat& frame,
     outConfidence = std::min(outConfidence, 1.0);
 }
 
-// --- Main inspection function ---
 bool InspectBottle(BottleInspectionResult* result)
 {
-    std::lock_guard<std::mutex> lock(frameMutex);
-    if (currentFrame.empty())
-        return false;
+    // Clone the current frame under lock, then release immediately.
+    // This keeps the mutex held for the minimum time and avoids holding
+    // it across the expensive detection pipeline.
+    cv::Mat frame;
+    {
+        std::lock_guard<std::mutex> lock(frameMutex);
+        if (currentFrame.empty())
+            return false;
+        frame = currentFrame.clone();
+    }
 
     memset(result, 0, sizeof(BottleInspectionResult));
 
     // === Signal 1: Detect green cap (primary anchor) ===
     cv::Rect capRect;
     double capConf = 0;
-    bool capFound = FindGreenCap(currentFrame, capRect, capConf);
+    bool capFound = FindGreenCap(frame, capRect, capConf);
 
     if (!capFound)
     {
@@ -451,12 +468,12 @@ bool InspectBottle(BottleInspectionResult* result)
 
     // === Signal 2: Detect white label below cap ===
     cv::Rect labelRect;
-    bool labelFound = FindLabel(currentFrame, capRect, labelRect);
+    bool labelFound = FindLabel(frame, capRect, labelRect);
 
     // === Signal 3: Infer bottle bounding box from cap + label ===
     cv::Rect bottleRect;
     double bottleConf = 0;
-    InferBottleRect(currentFrame, capRect, labelFound, labelRect,
+    InferBottleRect(frame, capRect, labelFound, labelRect,
         bottleRect, bottleConf);
 
     result->bottleDetected = true;
@@ -466,12 +483,12 @@ bool InspectBottle(BottleInspectionResult* result)
     result->bottleHeight = bottleRect.height;
     result->bottleConfidence = bottleConf;
 
-    // === Signal 5: QR / Barcode detection ===
+    // === Signal 4: QR / Barcode detection ===
     try
     {
         cv::QRCodeDetector qrDetector;
         std::vector<cv::Point> points;
-        std::string decoded = qrDetector.detectAndDecode(currentFrame, points);
+        std::string decoded = qrDetector.detectAndDecode(frame, points);
         if (!decoded.empty())
         {
             result->qrDetected = true;

@@ -33,6 +33,15 @@ namespace OPC_UA_ClientSimulator
         private int _circleCount;
         private double _circleConfidence;
 
+        // Gecachte Flaschendaten (für Sortierlogik + last-valid-hold)
+        private bool _bottleDetected;
+        private bool _bottleCapDetected;
+        private double _bottleConfidence;
+        private int _bottleStatus;
+        private BottleInspection? _lastValidBottle;  // letztes gültiges Ergebnis (anti-flicker)
+        private int _bottleHoldFrames;               // countdown für hold
+        private const int BottleHoldDuration = 8;    // Frames bevor "Nicht erkannt" angezeigt wird
+
         // Sortier-Statistik
         private int _totalDecisions, _sortedOut, _qualityOk, _halted;
 
@@ -199,8 +208,9 @@ namespace OPC_UA_ClientSimulator
                 var color = _source.DetectColor();
                 var faces = _source.DetectFaces();
                 var circles = _source.DetectCircles();
+                var bottle = _source.InspectBottle();
 
-                UpdateCachedValues(color, faces, circles);
+                UpdateCachedValues(color, faces, circles, bottle);
 
                 // Overlay nur für gewählten Modus
                 OverlayCanvas.Children.Clear();
@@ -210,7 +220,7 @@ namespace OPC_UA_ClientSimulator
                     case 1: DisplayFaceResult(faces); break;
                     case 2: RunEdgeDetection(); break;
                     case 3: DisplayCircleResult(circles); break;
-                    case 4: DisplayBottleInspection(); break;
+                    case 4: DisplayBottleInspection(bottle); break;
                 }
 
                 UpdateDetectionDisplay();
@@ -235,7 +245,8 @@ namespace OPC_UA_ClientSimulator
 
         // ===== Gecachte Werte aktualisieren =====
 
-        private void UpdateCachedValues(ColorResult? color, MultiResult? faces, MultiResult? circles)
+        private void UpdateCachedValues(ColorResult? color, MultiResult? faces, MultiResult? circles,
+            BottleInspection? bottle)
         {
             _cameraRunning = color != null || faces != null || circles != null;
 
@@ -255,6 +266,27 @@ namespace OPC_UA_ClientSimulator
             {
                 _circleCount = circles.Count;
                 _circleConfidence = circles.Confidence;
+            }
+            if (bottle != null)
+            {
+                _bottleDetected = bottle.BottleDetected;
+                _bottleCapDetected = bottle.CapDetected;
+                _bottleConfidence = bottle.BottleConfidence;
+                _bottleStatus = bottle.BottleStatus;
+
+                if (bottle.BottleDetected)
+                {
+                    _lastValidBottle = bottle;
+                    _bottleHoldFrames = BottleHoldDuration;
+                }
+                else if (_bottleHoldFrames > 0)
+                {
+                    _bottleHoldFrames--;
+                }
+                else
+                {
+                    _lastValidBottle = null;
+                }
             }
         }
 
@@ -347,9 +379,11 @@ namespace OPC_UA_ClientSimulator
 
         // ===== Flascheninspektion =====
 
-        private void DisplayBottleInspection()
+        private void DisplayBottleInspection(BottleInspection? fresh)
         {
-            var result = _source?.InspectBottle();
+            // Use fresh result if available, otherwise hold the last valid one
+            var result = (fresh?.BottleDetected == true) ? fresh : _lastValidBottle;
+
             if (result == null)
             {
                 PositionText.Text = "Keine Inspektionsdaten";
@@ -578,6 +612,25 @@ namespace OPC_UA_ClientSimulator
                 {
                     AddLog($"[{DateTime.Now:HH:mm:ss}] QUALITÄT OK: {_circleCount} Kreise → Durchlassen");
                     _lastDecision = decision;
+                }
+                return;
+            }
+
+            // Priorität 4: Flascheninspektion — Deckel fehlt → Aussortieren
+            if (_bottleDetected && !_bottleCapDetected && _bottleConfidence > 0.4)
+            {
+                _sortedOut++; _totalDecisions++;
+                string decision = "❌ DEFEKT — Deckel fehlt";
+                SetDecision(decision, "#8e44ad");
+                if (decision != _lastDecision)
+                {
+                    AddLog($"[{DateTime.Now:HH:mm:ss}] FLASCHE DEFEKT: Deckel fehlt Conf: {_bottleConfidence:P0} → Weiche öffnen");
+                    _lastDecision = decision;
+                }
+                if (ChkRejectGate.IsChecked != true && _source is IPlantControl ctrl3)
+                {
+                    ChkRejectGate.IsChecked = true;
+                    ctrl3.SetRejectGateOpen(true);
                 }
                 return;
             }
