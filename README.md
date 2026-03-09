@@ -1,6 +1,8 @@
-# VisionBridge
+# VisionBridge-CV
 
-C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST, OPC-UA, and industrial bottle inspection on top.
+**Classical Computer Vision** — C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST, OPC-UA, and industrial bottle inspection on top.
+
+> 💡 This project has a companion: **[VisionBridge-AI](https://github.com/VirgileDjimgou/VisionBridge-AI)** — the same industrial inspection problem solved with deep learning (YOLO / ONNX / PyTorch). Both repos share the same architecture (REST + OPC-UA + WPF client) so the detection engines can be compared side by side.
 
 I built this as a small technical playground for my portfolio. I originally started it while preparing
 for an interview at NeuroCheck (industrial image processing, Stuttgart) and it just kind of kept going
@@ -452,6 +454,37 @@ Some of the things I worked through:
   25 xUnit tests with no camera, no DLL, and no hardware in the loop
 
 Nothing groundbreaking. Just the kind of practice that sticks.
+
+
+## VisionBridge-CV vs. VisionBridge-AI
+
+This project implements all detections using **classical computer vision** — hand-tuned HSV
+filters, Hough transforms, Haar cascades, geometric inference. No training data, no GPU,
+no model files. Everything is deterministic and interpretable.
+
+The same industrial inspection problem has also been implemented with **deep learning**
+in a companion repository:
+
+🔗 **[VisionBridge-AI](https://github.com/VirgileDjimgou/VisionBridge-AI)** — YOLO / ONNX / PyTorch
+
+The two projects share the same managed architecture (ASP.NET Core Runtime, OPC-UA server,
+WPF client, `IVisionSource` / `IPlantControl` interfaces), so only the detection engine
+differs. This makes it possible to compare the two approaches on the same metrics:
+
+| Criterion | VisionBridge-CV (this repo) | VisionBridge-AI |
+|---|---|---|
+| **Detection method** | HSV filtering, Haar cascade, Hough, Canny, geometric inference | YOLO / neural network inference (ONNX Runtime) |
+| **Training data required** | None — hand-tuned parameters | Yes — labeled dataset for each object class |
+| **GPU required** | No | Optional (CPU fallback via ONNX Runtime) |
+| **Latency (typical)** | < 5 ms per frame | 15–50 ms per frame (depends on model + hardware) |
+| **Generalization** | Low — tuned for specific products (Volvic cap HSV, red object HSV) | High — learns to recognize new objects from data |
+| **Interpretability** | Full — every threshold and filter is explicit | Low — neural network is a black box |
+| **Robustness to lighting** | Moderate — dual HSV ranges help, but limits remain | High — models trained on augmented data handle variance |
+| **Setup complexity** | Minimal — just OpenCV | Model training + export + runtime integration |
+
+The goal is not to declare a winner — both approaches have their place in industrial vision.
+Classical CV excels when the object is well-defined and the environment is controlled.
+Deep learning shines when variability is high and hand-tuning becomes impractical.
 
 
 ## Disclaimer
