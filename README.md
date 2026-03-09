@@ -495,4 +495,4 @@ Don't expect industrial-grade anything here.
 
 ## Author
 
-Patrick Djimgou
+Patrick Virgile Djimgou
