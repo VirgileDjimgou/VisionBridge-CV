@@ -82,8 +82,8 @@ a generic bottle detector — it leverages the specific visual characteristics o
 
 | Signal | Method | Purpose |
 |--------|--------|---------|
-| Green cap | HSV color filtering (H: 30–90) + contour analysis | Primary anchor — the green Volvic cap is the strongest, most reliable signal |
-| White label | Thresholding in the region below the detected cap | Confirms bottle body position and refines the bounding box |
+| Green cap | Dual HSV range: cool/daylight (H 30–90) **+** warm/incandescent (H 22–50), morphological cleanup, contour scoring | Primary anchor — dual range tolerates indoor lighting shifts toward yellow-green |
+| White label | Adaptive thresholding in the region below the detected cap | Confirms bottle body position and refines the bounding box |
 | Bottle body | Geometric inference from cap + label positions | Estimates the full bottle bounding box even on a transparent body |
 | QR / Barcode | OpenCV `QRCodeDetector` | Optional — decodes any QR code visible on the bottle |
 
@@ -146,22 +146,28 @@ WPF client in local mode while the Runtime is also running, one of them won't ge
 
 ### NeuroC_ComVision (C++ DLL)
 
-Camera capture on a dedicated thread with `std::mutex` for frame access. The exported functions:
+Camera capture on a dedicated thread with `std::mutex` for frame access. OpenCV headers are
+included in `pch.h` (precompiled header) wrapped with `#pragma warning` to suppress Code Analysis
+warnings from OpenCV's own internal headers. The exported functions:
 
 | Function | Description |
 |----------|-------------|
 | `StartCamera` / `StopCamera` | Opens/releases the webcam, starts/stops the capture thread |
-| `GetFrame` | HSV color filtering for red objects, returns bounding box |
+| `GetFrame` | HSV filtering for red objects — covers **both** red HSV ranges (0–10 and 170–180), picks the largest contour |
 | `DetectFaces` | Haar cascade (`haarcascade_frontalface_default.xml`), up to 32 faces |
 | `DetectEdges` | Gaussian blur + Canny, outputs single-channel grayscale |
 | `DetectCircles` | Hough transform, results packed as bounding boxes |
 | `GetFrameInfo` / `GetFrameBytesRgb` | Raw frame data with stride info, BGR or RGB |
-| `InspectBottle` | Multi-signal Volvic bottle inspection (cap, label, body, QR) |
+| `InspectBottle` | Multi-signal Volvic inspection — clones frame under lock then releases mutex before the pipeline |
 
 
 ### VisionBridge Runtime (REST_API_NeuroC_Prep)
 
 This is the central process. ASP.NET Core 8, owns the camera via P/Invoke.
+
+`VisionService` is the singleton that owns the camera and all detection state. Noteworthy implementation details:
+- `InspectBottle` results are **cached for 100 ms** — the OPC-UA poll (250 ms) and the WPF timer (33–200 ms) would otherwise call the pipeline redundantly on every tick
+- `ConveyorSpeed` is clamped to [0, 5 m/s] regardless of the write source (REST or OPC-UA)
 
 The REST API has six controller groups:
 
@@ -250,14 +256,18 @@ automatically when the active source supports it.
 
 **Sorting logic** — runs on every source (not just OPC-UA), throttled to ~2 Hz for fast sources:
 
-| Condition | Action |
-|---|---|
-| `Faces.Count > 0` | 🛑 **HALT** — safety stop |
-| `Color.Detected` + `Confidence > 30%` | ⚠ **REJECT** — sort out + auto-open reject gate |
-| `Circles.Count ≥ 3` | ✅ **QUALITY OK** — pass through |
+| Priority | Condition | Action |
+|:---:|---|---|
+| 1 | `Faces.Count > 0` | 🛑 **HALT** — safety stop |
+| 2 | `Color.Detected` + `Confidence > 30%` | ⚠ **REJECT** — sort out + auto-open reject gate |
+| 3 | `Circles.Count ≥ 3` | ✅ **QUALITY OK** — pass through |
+| 4 | `BottleDetected` + `!CapDetected` + `Confidence > 40%` | ❌ **DEFECT** — cap missing + auto-open reject gate |
 
-When a defect is detected, the reject gate opens automatically via `IPlantControl`
+When a defect is detected (Priority 2 or 4), the reject gate opens automatically via `IPlantControl`
 and closes again when the defect clears.
+
+The bottle inspection display uses a **last-valid-result hold** (8 frames): if the bottle is momentarily
+lost between frames, the overlay stays visible instead of flickering to "not detected".
 
 **Bottle inspection overlay:**
 
@@ -273,6 +283,25 @@ Was an early standalone console app for the OPC-UA server. Everything got folded
 as a hosted service, so this project is basically dead code at this point.
 
 
+### VisionBridge.Tests (xUnit)
+
+25 unit tests covering `VisionService` using `SimulatedVisionBackend` — no camera or DLL required.
+
+| Test group | What is covered |
+|---|---|
+| Camera lifecycle | `Start`, `Stop`, double `Start` |
+| Plant control | `ConveyorSpeed` clamping, `GetPlantControl` round-trip |
+| Color / Face / Circle detection | Null when stopped, valid result when started, InspectionId + Timestamp |
+| Bottle inspection | Status enum range, CapBoundingBox present when cap detected, DEFECT when cap missing |
+| Result cache | Two rapid calls return the same `InspectionId` (within 100 ms window) |
+| Diagnostics | `BackendMode = "Simulated"`, uptime format, inspection counter increment |
+
+Run with:
+```
+dotnet test VisionBridge.Tests
+```
+
+
 ## Tech stack
 
 | Layer | What |
@@ -280,6 +309,7 @@ as a hosted service, so this project is basically dead code at this point.
 | Vision engine | C++17, OpenCV 4.x, Windows DLL (`__declspec(dllexport)`), `std::thread` / `std::mutex` |
 | Runtime | ASP.NET Core 8, OPC Foundation .NET Standard SDK, Swagger |
 | Unified WPF client | .NET 8, WPF, P/Invoke, OPC-UA Client SDK, `DispatcherTimer`, `IVisionSource` / `IPlantControl` |
+| Tests | .NET 8, xUnit, `SimulatedVisionBackend` (no hardware required) |
 | Interop | `extern "C"`, `DllImport` with `CallingConvention.Cdecl`, manual struct marshalling |
 | Protocols | HTTP/JSON, OPC-UA binary over TCP (read + write + method calls) |
 
@@ -289,6 +319,7 @@ as a hosted service, so this project is basically dead code at this point.
 ```
 NeuroC_ComVision/
 ├── NeuroC_ComVision/              # C++ DLL
+│   ├── pch.h                      # Precompiled header — OpenCV includes with Code Analysis suppressed
 │   ├── NeuroC_ComVision.h         # C export interface
 │   └── NeuroC_ComVision.cpp       # Capture thread + detection algorithms + bottle inspection
 │
@@ -298,8 +329,8 @@ NeuroC_ComVision/
 │   │   ├── IVisionBackend.cs      # Abstraction over native/simulated engine
 │   │   ├── NativeVisionBackend.cs # Wraps P/Invoke calls to the C++ DLL
 │   │   ├── SimulatedVisionBackend.cs # Synthetic data (no DLL/camera needed)
-│   │   └── NativeInterop.cs      # P/Invoke declarations
-│   ├── Services/VisionService.cs  # Singleton — vision + metrics + plant control
+│   │   └── NativeInterop.cs      # P/Invoke declarations + BottleInspectionResult struct
+│   ├── Services/VisionService.cs  # Singleton — vision + metrics + plant control + InspectBottle cache
 │   ├── Controllers/
 │   │   ├── CameraController.cs    # Start, Stop, Status, Cascade
 │   │   ├── DetectionController.cs # Color, Faces, Circles, Edges
@@ -315,13 +346,16 @@ NeuroC_ComVision/
 │
 ├── OPC-UA_ClientSimulator/        # Unified WPF Client (Vision Lab + SPS-Sortierlogik)
 │   ├── MainWindow.xaml            # Two-column layout: video + controls
-│   ├── MainWindow.xaml.cs         # Unified logic: rendering + detection + sorting
+│   ├── MainWindow.xaml.cs         # Rendering + detection + sorting (4 priorities incl. bottle)
 │   ├── VisionInterop.cs           # P/Invoke for local mode
 │   └── Sources/
 │       ├── IVisionSource.cs       # IVisionSource + IPlantControl interfaces + result types
 │       ├── LocalVisionSource.cs   # P/Invoke (video + detection, no plant control)
 │       ├── RestVisionSource.cs    # HTTP + IPlantControl via REST
 │       └── OpcUaVisionSource.cs   # OPC-UA + IPlantControl via Write/Methods
+│
+├── VisionBridge.Tests/            # xUnit test project (no camera/DLL needed)
+│   └── VisionServiceTests.cs      # 25 tests covering VisionService with SimulatedVisionBackend
 │
 └── OPC-UA_Server/                 # Deprecated
 ```
@@ -335,6 +369,13 @@ on the command line), then start `REST_API_NeuroC_Prep`. The API generates synth
 a red object moving on a simulated conveyor belt, cycling face/circle counts, and simulated bottle
 inspections alternating between cap-present (OK) and cap-missing (DEFECT) scenarios. All endpoints work
 identically to the real camera mode. This is the easiest way to explore the project without any hardware.
+
+**Run the unit tests (no hardware needed):**
+```
+dotnet test VisionBridge.Tests
+```
+25 tests, ~400 ms. Covers `VisionService` lifecycle, plant control, all detection types, bottle
+inspection cache, and diagnostics — all against `SimulatedVisionBackend`.
 
 **Just the local camera (no server needed):**
 Start `OPC-UA_ClientSimulator`, pick "Lokal (P/Invoke)" and click Start.
@@ -384,6 +425,7 @@ Some of the things I worked through:
 
 * Struct layout and memory alignment across native/managed boundaries
 * Mutex-protected global state in a DLL consumed by multiple managed threads
+* **Releasing a mutex as early as possible** — cloning the camera frame under lock then running the entire detection pipeline on the copy, so the capture thread is never blocked by expensive processing
 * WPF rendering pipeline and how `DispatcherTimer` + `BitmapSource.Freeze()` interact
 * Embedding OPC-UA inside an ASP.NET Core process as an `IHostedService`
 * Why industrial systems typically run OPC-UA and REST side by side (not one or the other)
@@ -400,8 +442,14 @@ Some of the things I worked through:
 * **Industrial traceability**: adding inspection IDs, timestamps, and confidence scores to every detection
 * **Runtime observability**: health checks, FPS tracking, uptime, inspection counters — the kind of
   diagnostics you'd expect in any production vision system
-* **Multi-signal vision pipeline**: combining HSV color filtering, contour analysis, geometric inference,
+* **Multi-signal vision pipeline**: combining dual-range HSV filtering, contour analysis, geometric inference,
   and QR detection into a single inspection function tuned for a specific product (Volvic bottle)
+* **Result caching at the service layer**: throttling expensive native calls with a short TTL to avoid
+  redundant DLL invocations from concurrent consumers (OPC-UA poll + WPF timer)
+* **Last-valid-result hold in HMI**: keeping the previous detection overlay visible for N frames to
+  avoid flickering on momentary occlusions — a standard pattern in industrial HMI
+* **Unit testing a native interop layer**: using `IVisionBackend` + `SimulatedVisionBackend` to drive
+  25 xUnit tests with no camera, no DLL, and no hardware in the loop
 
 Nothing groundbreaking. Just the kind of practice that sticks.
 
