@@ -1,8 +1,8 @@
 # VisionBridge-CV
 
-**Classical Computer Vision** — C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST, OPC-UA, and industrial bottle inspection on top.
+**Classical Computer Vision.** A C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST, OPC-UA, and industrial bottle inspection on top.
 
-> 💡 This project has a companion: **[VisionBridge-AI](https://github.com/VirgileDjimgou/VisionBridge-AI)** — the same industrial inspection problem solved with deep learning (YOLO / ONNX / PyTorch). Both repos share the same architecture (REST + OPC-UA + WPF client) so the detection engines can be compared side by side.
+> 💡 This project has a companion: **[VisionBridge-AI](https://github.com/VirgileDjimgou/VisionBridge-AI)**. Same industrial inspection problem, solved with deep learning (YOLO / ONNX / PyTorch). Both repos share the same architecture (REST + OPC-UA + WPF client) so the detection engines can be compared side by side.
 
 I built this as a small technical playground for my portfolio. I originally started it while preparing
 for an interview at NeuroCheck (industrial image processing, Stuttgart) and it just kind of kept going
@@ -30,7 +30,7 @@ the camera through P/Invoke and exposes the data through two protocols at once:
 Both protocols read from the same `VisionService` singleton in memory, so there's no serialization
 overhead between them. One process, one camera, two interfaces.
 
-Every detection now carries an **Inspection ID**, a **UTC timestamp**, and a **confidence score** (0–1),
+Every detection now carries an **Inspection ID**, a **UTC timestamp**, and a **confidence score** (0 to 1),
 providing the traceability that industrial QC systems require.
 
 The Runtime also exposes **plant control** nodes (conveyor speed, inspection toggle, reject gate)
@@ -40,7 +40,7 @@ A **diagnostics** endpoint (REST + OPC-UA) reports uptime, FPS, backend mode, an
 There's a **unified WPF client** that merges the vision lab and the PLC/sorting simulator into a
 single two-column interface. The left panel shows live video with bounding-box overlays (when the source
 supports it), while the right panel displays detection values, plant controls, and sorting decisions.
-You pick one of three data sources at runtime — direct P/Invoke to the DLL (fastest, ~30 fps), HTTP
+You pick one of three data sources at runtime: direct P/Invoke to the DLL (fastest, ~30 fps), HTTP
 to the REST API (~5 fps with Base64 frames), or OPC-UA (no video, just scalar values). All three are
 abstracted behind an `IVisionSource` interface. An optional `IPlantControl` interface lets the OPC-UA
 and REST sources write back to the server (conveyor speed, inspection toggle, reject gate, camera
@@ -61,7 +61,7 @@ the sorting logic automatically triggers the reject gate.
 ### 2. Face detection (Haar cascade)
 
 Classical Haar cascade (`haarcascade_frontalface_default.xml`) loaded at startup. Detects up to
-32 faces per frame. In the sorting logic, any detected face triggers an immediate **safety halt** —
+32 faces per frame. In the sorting logic, any detected face triggers an immediate **safety halt**,
 simulating a real industrial scenario where a person in the machine zone requires an emergency stop.
 
 ### 3. Edge detection (Canny)
@@ -76,18 +76,18 @@ detected circle. The sorting logic uses circle count as a quality metric (≥ 3 
 
 ### 5. Volvic bottle inspection 🍾
 
-A multi-signal inspection pipeline specifically tuned for **Volvic 1.5L PET bottles**. This is not
-a generic bottle detector — it leverages the specific visual characteristics of Volvic bottles
+A multi-signal inspection pipeline specifically tuned for **Volvic 1.5L PET bottles**. Not
+a generic bottle detector: it leverages the specific visual characteristics of Volvic bottles
 (green cap, white label with mountain graphics) for robust identification.
 
 **Detection signals:**
 
 | Signal | Method | Purpose |
 |--------|--------|---------|
-| Green cap | Dual HSV range: cool/daylight (H 30–90) **+** warm/incandescent (H 22–50), morphological cleanup, contour scoring | Primary anchor — dual range tolerates indoor lighting shifts toward yellow-green |
-| White label | Adaptive thresholding in the region below the detected cap | Confirms bottle body position and refines the bounding box |
+| Green cap | Dual HSV range: cool/daylight (H 30–90) **+** warm/incandescent (H 22–50), morphological cleanup, contour scoring | Primary anchor. Dual range tolerates indoor lighting shifts toward yellow-green |
+| White label | Adaptive thresholding in the region below the detected cap | Confirms bottle body position, refines the bounding box |
 | Bottle body | Geometric inference from cap + label positions | Estimates the full bottle bounding box even on a transparent body |
-| QR / Barcode | OpenCV `QRCodeDetector` | Optional — decodes any QR code visible on the bottle |
+| QR / Barcode | OpenCV `QRCodeDetector` | Optional: decodes any QR code visible on the bottle |
 
 **Inspection verdict:**
 
@@ -155,21 +155,21 @@ warnings from OpenCV's own internal headers. The exported functions:
 | Function | Description |
 |----------|-------------|
 | `StartCamera` / `StopCamera` | Opens/releases the webcam, starts/stops the capture thread |
-| `GetFrame` | HSV filtering for red objects — covers **both** red HSV ranges (0–10 and 170–180), picks the largest contour |
+| `GetFrame` | HSV filtering for red objects, covering **both** red HSV ranges (0–10 and 170–180). Picks the largest contour |
 | `DetectFaces` | Haar cascade (`haarcascade_frontalface_default.xml`), up to 32 faces |
 | `DetectEdges` | Gaussian blur + Canny, outputs single-channel grayscale |
 | `DetectCircles` | Hough transform, results packed as bounding boxes |
 | `GetFrameInfo` / `GetFrameBytesRgb` | Raw frame data with stride info, BGR or RGB |
-| `InspectBottle` | Multi-signal Volvic inspection — clones frame under lock then releases mutex before the pipeline |
+| `InspectBottle` | Multi-signal Volvic inspection. Clones frame under lock, releases mutex, then runs the pipeline |
 
 
 ### VisionBridge Runtime (REST_API_NeuroC_Prep)
 
 This is the central process. ASP.NET Core 8, owns the camera via P/Invoke.
 
-`VisionService` is the singleton that owns the camera and all detection state. Noteworthy implementation details:
-- `InspectBottle` results are **cached for 100 ms** — the OPC-UA poll (250 ms) and the WPF timer (33–200 ms) would otherwise call the pipeline redundantly on every tick
-- `ConveyorSpeed` is clamped to [0, 5 m/s] regardless of the write source (REST or OPC-UA)
+`VisionService` is the singleton that owns the camera and all detection state. Two things worth noting:
+- `InspectBottle` results are **cached for 100 ms**. Without this, the OPC-UA poll (250 ms) and WPF timer (33–200 ms) would call the pipeline redundantly on every tick.
+- `ConveyorSpeed` is clamped to [0, 5 m/s] regardless of the write source (REST or OPC-UA).
 
 The REST API has six controller groups:
 
@@ -191,8 +191,8 @@ opc.tcp://localhost:4840/visionbridge
 Objects/Vision
 ├── Camera/
 │   ├── Running              (Boolean, read)
-│   ├── Start()              (Method — starts the camera)
-│   └── Stop()               (Method — stops the camera)
+│   ├── Start()              (Method, starts the camera)
+│   └── Stop()               (Method, stops the camera)
 ├── Color/
 │   ├── Detected             (Boolean)
 │   ├── X / Y / Width / Height (Int32)
@@ -208,15 +208,15 @@ Objects/Vision
 │   ├── Detected             (Boolean)
 │   ├── Confidence           (Double)
 │   ├── CapDetected          (Boolean)
-│   ├── Status               (Int32 — 0=None, 1=OK, 2=Defect)
+│   ├── Status               (Int32: 0=None, 1=OK, 2=Defect)
 │   └── DefectCount          (Int32)
 ├── Control/                          ← WRITABLE by OPC-UA clients
-│   ├── ConveyorSpeed        (Double, r/w — 0–5 m/s)
+│   ├── ConveyorSpeed        (Double, r/w, 0–5 m/s)
 │   ├── InspectionEnabled    (Boolean, r/w)
 │   └── RejectGateOpen       (Boolean, r/w)
 └── Diagnostics/
     ├── Uptime               (String)
-    ├── BackendMode           (String — "Native" or "Simulated")
+    ├── BackendMode           (String: "Native" or "Simulated")
     ├── TotalInspections     (Int64)
     └── CurrentFps           (Double)
 ```
@@ -231,11 +231,11 @@ This project merges the former **VisionClientWPF** (vision lab / video rendering
 
 | Area | Content |
 |------|--------|
-| **Left panel** — Vision Lab | Live video + overlay canvas (bounding boxes, ellipses), detection mode selector (Color / Face / Edge / Circle / Bottle Inspection), FPS counter |
-| **Right panel** — SPS / Steuerung | Detection values (camera status, color, faces, circles, bottle status with confidence), plant control (conveyor speed, inspection, reject gate), current sorting decision + statistics |
+| **Left panel**: Vision Lab | Live video + overlay canvas (bounding boxes, ellipses), detection mode selector (Color / Face / Edge / Circle / Bottle Inspection), FPS counter |
+| **Right panel**: SPS / Steuerung | Detection values (camera status, color, faces, circles, bottle status with confidence), plant control (conveyor speed, inspection, reject gate), current sorting decision + statistics |
 | **Bottom bar** | Runtime diagnostics (uptime, backend, server FPS, inspections) + sorting log |
 
-**Data sources** — pick one from the dropdown and hit Start:
+**Data sources** (pick one from the dropdown and hit Start):
 
 | Source | Video | Detection | Plant Control | Diagnostics | Latency |
 |--------|:-----:|:---------:|:-------------:|:-----------:|:-------:|
@@ -244,7 +244,7 @@ This project merges the former **VisionClientWPF** (vision lab / video rendering
 | OPC-UA | — | Scalar values | ✅ via Write + Methods | ✅ | ~250ms |
 
 All three sources implement `IVisionSource`. Sources that support bidirectional control also
-implement `IPlantControl` — the plant control panel and camera start/stop buttons appear
+implement `IPlantControl`. The plant control panel and camera start/stop buttons appear
 automatically when the active source supports it.
 
 **`IPlantControl` capabilities (OPC-UA + REST):**
@@ -256,14 +256,14 @@ automatically when the active source supports it.
 | Toggle inspection | Write to `Control/InspectionEnabled` | `POST /api/plant/inspection` |
 | Reject gate control | Write to `Control/RejectGateOpen` | `POST /api/plant/reject-gate` |
 
-**Sorting logic** — runs on every source (not just OPC-UA), throttled to ~2 Hz for fast sources:
+**Sorting logic.** Runs on every source (not just OPC-UA), throttled to ~2 Hz for fast sources:
 
 | Priority | Condition | Action |
 |:---:|---|---|
-| 1 | `Faces.Count > 0` | 🛑 **HALT** — safety stop |
-| 2 | `Color.Detected` + `Confidence > 30%` | ⚠ **REJECT** — sort out + auto-open reject gate |
-| 3 | `Circles.Count ≥ 3` | ✅ **QUALITY OK** — pass through |
-| 4 | `BottleDetected` + `!CapDetected` + `Confidence > 40%` | ❌ **DEFECT** — cap missing + auto-open reject gate |
+| 1 | `Faces.Count > 0` | 🛑 **HALT**: safety stop |
+| 2 | `Color.Detected` + `Confidence > 30%` | ⚠ **REJECT**: sort out + auto-open reject gate |
+| 3 | `Circles.Count ≥ 3` | ✅ **QUALITY OK**: pass through |
+| 4 | `BottleDetected` + `!CapDetected` + `Confidence > 40%` | ❌ **DEFECT**: cap missing + auto-open reject gate |
 
 When a defect is detected (Priority 2 or 4), the reject gate opens automatically via `IPlantControl`
 and closes again when the defect clears.
@@ -287,7 +287,7 @@ as a hosted service, so this project is basically dead code at this point.
 
 ### VisionBridge.Tests (xUnit)
 
-25 unit tests covering `VisionService` using `SimulatedVisionBackend` — no camera or DLL required.
+25 unit tests covering `VisionService` using `SimulatedVisionBackend`. No camera or DLL required.
 
 | Test group | What is covered |
 |---|---|
@@ -367,7 +367,7 @@ NeuroC_ComVision/
 
 **Simulation mode (no camera or DLL needed):**
 Set `"VisionBridge:Simulation": true` in `appsettings.json` (or pass `--VisionBridge:Simulation=true`
-on the command line), then start `REST_API_NeuroC_Prep`. The API generates synthetic detection data —
+on the command line), then start `REST_API_NeuroC_Prep`. The API generates synthetic detection data:
 a red object moving on a simulated conveyor belt, cycling face/circle counts, and simulated bottle
 inspections alternating between cap-present (OK) and cap-missing (DEFECT) scenarios. All endpoints work
 identically to the real camera mode. This is the easiest way to explore the project without any hardware.
@@ -377,7 +377,7 @@ identically to the real camera mode. This is the easiest way to explore the proj
 dotnet test VisionBridge.Tests
 ```
 25 tests, ~400 ms. Covers `VisionService` lifecycle, plant control, all detection types, bottle
-inspection cache, and diagnostics — all against `SimulatedVisionBackend`.
+inspection cache, and diagnostics, all against `SimulatedVisionBackend`.
 
 **Just the local camera (no server needed):**
 Start `OPC-UA_ClientSimulator`, pick "Lokal (P/Invoke)" and click Start.
@@ -427,13 +427,13 @@ Some of the things I worked through:
 
 * Struct layout and memory alignment across native/managed boundaries
 * Mutex-protected global state in a DLL consumed by multiple managed threads
-* **Releasing a mutex as early as possible** — cloning the camera frame under lock then running the entire detection pipeline on the copy, so the capture thread is never blocked by expensive processing
+* **Releasing a mutex as early as possible.** I clone the camera frame under lock then run the entire detection pipeline on the copy, so the capture thread is never blocked by expensive processing.
 * WPF rendering pipeline and how `DispatcherTimer` + `BitmapSource.Freeze()` interact
 * Embedding OPC-UA inside an ASP.NET Core process as an `IHostedService`
 * Why industrial systems typically run OPC-UA and REST side by side (not one or the other)
 * Abstracting over three completely different data sources behind one interface
 * Separating read-only data (`IVisionSource`) from actuator commands (`IPlantControl`) with
-  optional interface implementation — the UI adapts automatically to the source's capabilities
+  optional interface implementation. The UI adapts automatically to the source's capabilities.
 * Dependency injection of hardware backends (`IVisionBackend`) for testability without physical devices
 * Merging two WPF apps into one coherent HMI that works in all three modes, with the plant
   control panel appearing only when the active source supports it
@@ -441,9 +441,9 @@ Some of the things I worked through:
   regardless of whether the data comes from P/Invoke, REST, or OPC-UA
 * **Bidirectional OPC-UA**: writable nodes (`OnSimpleWriteValue` callbacks), OPC-UA Methods, and
   how a PLC client can both read detection data and write control commands back to the server
-* **Industrial traceability**: adding inspection IDs, timestamps, and confidence scores to every detection
-* **Runtime observability**: health checks, FPS tracking, uptime, inspection counters — the kind of
-  diagnostics you'd expect in any production vision system
+* **Industrial traceability**: inspection IDs, timestamps, and confidence scores on every detection
+* **Runtime observability**: health checks, FPS tracking, uptime, inspection counters. The kind of
+  diagnostics you'd expect in any production vision system.
 * **Multi-signal vision pipeline**: combining dual-range HSV filtering, contour analysis, geometric inference,
   and QR detection into a single inspection function tuned for a specific product (Volvic bottle)
 * **Result caching at the service layer**: throttling expensive native calls with a short TTL to avoid
@@ -458,14 +458,14 @@ Nothing groundbreaking. Just the kind of practice that sticks.
 
 ## VisionBridge-CV vs. VisionBridge-AI
 
-This project implements all detections using **classical computer vision** — hand-tuned HSV
+This project implements all detections using **classical computer vision**: hand-tuned HSV
 filters, Hough transforms, Haar cascades, geometric inference. No training data, no GPU,
 no model files. Everything is deterministic and interpretable.
 
 The same industrial inspection problem has also been implemented with **deep learning**
 in a companion repository:
 
-🔗 **[VisionBridge-AI](https://github.com/VirgileDjimgou/VisionBridge-AI)** — YOLO / ONNX / PyTorch
+🔗 **[VisionBridge-AI](https://github.com/VirgileDjimgou/VisionBridge-AI)** (YOLO / ONNX / PyTorch)
 
 The two projects share the same managed architecture (ASP.NET Core Runtime, OPC-UA server,
 WPF client, `IVisionSource` / `IPlantControl` interfaces), so only the detection engine
@@ -474,13 +474,13 @@ differs. This makes it possible to compare the two approaches on the same metric
 | Criterion | VisionBridge-CV (this repo) | VisionBridge-AI |
 |---|---|---|
 | **Detection method** | HSV filtering, Haar cascade, Hough, Canny, geometric inference | YOLO / neural network inference (ONNX Runtime) |
-| **Training data required** | None — hand-tuned parameters | Yes — labeled dataset for each object class |
+| **Training data required** | None (all hand-tuned) | Yes, labeled dataset for each object class |
 | **GPU required** | No | Optional (CPU fallback via ONNX Runtime) |
 | **Latency (typical)** | < 5 ms per frame | 15–50 ms per frame (depends on model + hardware) |
-| **Generalization** | Low — tuned for specific products (Volvic cap HSV, red object HSV) | High — learns to recognize new objects from data |
-| **Interpretability** | Full — every threshold and filter is explicit | Low — neural network is a black box |
-| **Robustness to lighting** | Moderate — dual HSV ranges help, but limits remain | High — models trained on augmented data handle variance |
-| **Setup complexity** | Minimal — just OpenCV | Model training + export + runtime integration |
+| **Generalization** | Low, tuned for specific products (Volvic cap HSV, red object HSV) | High, learns to recognize new objects from data |
+| **Interpretability** | Full: every threshold and filter is explicit | Low: neural network is a black box |
+| **Robustness to lighting** | Moderate. Dual HSV ranges help, but limits remain | High. Models trained on augmented data handle variance |
+| **Setup complexity** | Minimal, just OpenCV | Model training + export + runtime integration |
 
 The goal is not to declare a winner — both approaches have their place in industrial vision.
 Classical CV excels when the object is well-defined and the environment is controlled.
