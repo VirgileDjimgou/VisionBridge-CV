@@ -34,6 +34,14 @@ public class OpcUaVisionSource : IVisionSource, IPlantControl
     private string _diagBackend = "";
     private long _diagInspections;
     private double _diagFps;
+
+    // Bottle inspection cached values
+    private bool _bottleDetected;
+    private double _bottleConfidence;
+    private bool _bottleCapDetected;
+    private int _bottleStatus;
+    private int _bottleDefectCount;
+
     private DateTime _lastRead = DateTime.MinValue;
 
     public OpcUaVisionSource(string endpointUrl = "opc.tcp://localhost:4840/visionbridge")
@@ -140,10 +148,16 @@ public class OpcUaVisionSource : IVisionSource, IPlantControl
                 new() { NodeId = new NodeId("Diagnostics.BackendMode", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Diagnostics.TotalInspections", _nsIndex), AttributeId = Attributes.Value },
                 new() { NodeId = new NodeId("Diagnostics.CurrentFps", _nsIndex), AttributeId = Attributes.Value },
+                // Bottle inspection (15-19)
+                new() { NodeId = new NodeId("Bottle.Detected", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Bottle.Confidence", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Bottle.CapDetected", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Bottle.Status", _nsIndex), AttributeId = Attributes.Value },
+                new() { NodeId = new NodeId("Bottle.DefectCount", _nsIndex), AttributeId = Attributes.Value },
             };
 
             _session.Read(null, 0, TimestampsToReturn.Neither, nodesToRead, out var r, out _);
-            if (r.Count < 15) return;
+            if (r.Count < 20) return;
 
             _cameraRunning = GetBool(r, 0);
             _colorDetected = GetBool(r, 1);
@@ -155,6 +169,13 @@ public class OpcUaVisionSource : IVisionSource, IPlantControl
             _circleConfidence = GetDouble(r, 10);
             _diagUptime = GetString(r, 11); _diagBackend = GetString(r, 12);
             _diagInspections = GetLong(r, 13); _diagFps = GetDouble(r, 14);
+
+            // Bottle inspection
+            _bottleDetected = GetBool(r, 15);
+            _bottleConfidence = GetDouble(r, 16);
+            _bottleCapDetected = GetBool(r, 17);
+            _bottleStatus = GetInt(r, 18);
+            _bottleDefectCount = GetInt(r, 19);
 
             _lastRead = DateTime.UtcNow;
         }
@@ -192,6 +213,17 @@ public class OpcUaVisionSource : IVisionSource, IPlantControl
         ReadAllValues();
         return new RuntimeDiagnostics(_diagUptime, _diagBackend, _cameraRunning,
             _diagInspections, _diagFps);
+    }
+
+    public BottleInspection? InspectBottle()
+    {
+        ReadAllValues();
+        if (!_cameraRunning) return null;
+        return new BottleInspection(
+            _bottleDetected, default, _bottleConfidence,
+            _bottleCapDetected, default,
+            false, false, null,
+            _bottleStatus, _bottleDefectCount);
     }
 
     // ===== IPlantControl — OPC-UA Write + Methods =====

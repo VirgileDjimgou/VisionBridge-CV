@@ -230,4 +230,65 @@ public sealed class SimulatedVisionBackend : IVisionBackend
         }
         return true;
     }
+
+    public bool InspectBottle(out NativeInterop.BottleInspectionResult result)
+    {
+        if (!_running)
+        {
+            result = default;
+            return false;
+        }
+
+        // Simulate a bottle moving on a conveyor belt
+        bool present = _tick % 200 < 160; // visible 80% of the time
+        int cycle = (_tick / 200) % 4;    // 4 different scenarios
+
+        result = new NativeInterop.BottleInspectionResult();
+
+        if (!present)
+        {
+            result.bottleDetected = false;
+            result.bottleStatus = 0; // BOTTLE_NONE
+            return true;
+        }
+
+        int bx = 220 + (int)(Math.Sin(_tick * 0.02) * 40);
+        result.bottleDetected = true;
+        result.bottleX = bx;
+        result.bottleY = 60;
+        result.bottleWidth = 140;
+        result.bottleHeight = 360;
+        result.bottleConfidence = 0.85;
+
+        // Cycle through different scenarios
+        switch (cycle)
+        {
+            case 0: // Cap present → OK
+                result.capDetected = true;
+                result.capX = bx + 40; result.capY = 60;
+                result.capWidth = 60; result.capHeight = 30;
+                result.bottleStatus = 1; // BOTTLE_OK
+                result.defectCount = 0;
+                break;
+            case 1: // Cap present → OK
+                result.capDetected = true;
+                result.capX = bx + 40; result.capY = 60;
+                result.capWidth = 60; result.capHeight = 30;
+                result.bottleStatus = 1; // BOTTLE_OK
+                result.defectCount = 0;
+                break;
+            case 2: // No cap → DEFECT
+                result.capDetected = false;
+                result.bottleStatus = 2;
+                result.defectCount = 1;
+                break;
+            case 3: // No cap → DEFECT
+                result.capDetected = false;
+                result.bottleStatus = 2;
+                result.defectCount = 1;
+                break;
+        }
+
+        return true;
+    }
 }

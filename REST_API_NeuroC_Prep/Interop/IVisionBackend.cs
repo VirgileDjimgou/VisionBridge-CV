@@ -17,4 +17,5 @@ public interface IVisionBackend
     bool DetectFaces(out NativeInterop.MultiDetectionResult result);
     bool DetectEdges(byte[] outputBuffer, int bufferSize, out int outWidth, out int outHeight);
     bool DetectCircles(out NativeInterop.MultiDetectionResult result);
+    bool InspectBottle(out NativeInterop.BottleInspectionResult result);
 }

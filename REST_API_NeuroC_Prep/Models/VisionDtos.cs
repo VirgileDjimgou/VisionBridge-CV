@@ -74,4 +74,24 @@ namespace REST_API_NeuroC_Prep.Models
         double CurrentFps,
         PlantControlDto PlantControl,
         LastDetectionDto? LastDetection);
+
+    // ===== Bottle Inspection =====
+
+    /// <summary>Overall inspection verdict.</summary>
+    public enum BottleStatusEnum { None = 0, Ok = 1, Defect = 2 }
+
+    /// <summary>Complete bottle inspection result from the vision engine.</summary>
+    public record BottleInspectionDto(
+        bool BottleDetected,
+        BoundingBoxDto? BottleBoundingBox,
+        double BottleConfidence,
+        bool CapDetected,
+        BoundingBoxDto? CapBoundingBox,
+        bool BarcodeDetected,
+        bool QrDetected,
+        string? DecodedValue,
+        BottleStatusEnum BottleStatus,
+        int DefectCount,
+        long InspectionId = 0,
+        DateTime? Timestamp = null);
 }

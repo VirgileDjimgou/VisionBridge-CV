@@ -210,6 +210,7 @@ namespace OPC_UA_ClientSimulator
                     case 1: DisplayFaceResult(faces); break;
                     case 2: RunEdgeDetection(); break;
                     case 3: DisplayCircleResult(circles); break;
+                    case 4: DisplayBottleInspection(); break;
                 }
 
                 UpdateDetectionDisplay();
@@ -272,6 +273,8 @@ namespace OPC_UA_ClientSimulator
             TxtCircleInfo.Text = _circleCount > 0
                 ? $"Count: {_circleCount}  Conf: {_circleConfidence:P0}"
                 : "Keine Kreise";
+
+            // Bottle info is updated in DisplayBottleInspection()
         }
 
         // ===== Erkennung-Overlay =====
@@ -339,6 +342,56 @@ namespace OPC_UA_ClientSimulator
             {
                 for (int i = 0; i < result.Count && i < result.Items.Length; i++)
                     DrawOverlayEllipse(result.Items[i], Brushes.Cyan, $"⌀{result.Items[i].Width}");
+            }
+        }
+
+        // ===== Flascheninspektion =====
+
+        private void DisplayBottleInspection()
+        {
+            var result = _source?.InspectBottle();
+            if (result == null)
+            {
+                PositionText.Text = "Keine Inspektionsdaten";
+                ConfidenceText.Text = "";
+                TxtBottleInfo.Text = "—";
+                return;
+            }
+
+            if (!result.BottleDetected)
+            {
+                PositionText.Text = "Keine Flasche erkannt";
+                ConfidenceText.Text = "";
+                TxtBottleInfo.Text = "Nicht erkannt";
+                return;
+            }
+
+            string statusEmoji = result.BottleStatus switch
+            {
+                1 => "✅", 2 => "❌", _ => "—"
+            };
+
+            PositionText.Text = $"Flasche: ({result.BottleBox.X},{result.BottleBox.Y}) " +
+                $"{result.BottleBox.Width}×{result.BottleBox.Height}";
+            ConfidenceText.Text = $"Conf: {result.BottleConfidence:P0}  " +
+                $"Status: {statusEmoji} {result.StatusLabel}";
+
+            TxtBottleInfo.Text =
+                $"{statusEmoji} {result.StatusLabel}  Conf: {result.BottleConfidence:P0}\n" +
+                $"Deckel: {(result.CapDetected ? "✅ Vorhanden" : "❌ Fehlt")}" +
+                (result.DefectCount > 0 ? $"  Defekte: {result.DefectCount}" : "");
+
+            // Overlays
+            if (_source!.SupportsVideo)
+            {
+                // Bottle bounding box (green if OK, red if defect)
+                var bottleColor = result.BottleStatus == 1 ? Brushes.LimeGreen : Brushes.OrangeRed;
+                DrawOverlayRect(result.BottleBox, bottleColor,
+                    result.StatusLabel);
+
+                // Cap box (cyan)
+                if (result.CapDetected)
+                    DrawOverlayRect(result.CapBox, Brushes.Cyan, "Deckel");
             }
         }
 

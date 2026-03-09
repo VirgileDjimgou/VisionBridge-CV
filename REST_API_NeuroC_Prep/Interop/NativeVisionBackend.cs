@@ -16,4 +16,5 @@ public sealed class NativeVisionBackend : IVisionBackend
     public bool DetectFaces(out NativeInterop.MultiDetectionResult result) => NativeInterop.DetectFaces(out result);
     public bool DetectEdges(byte[] outputBuffer, int bufferSize, out int outWidth, out int outHeight) => NativeInterop.DetectEdges(outputBuffer, bufferSize, out outWidth, out outHeight);
     public bool DetectCircles(out NativeInterop.MultiDetectionResult result) => NativeInterop.DetectCircles(out result);
+    public bool InspectBottle(out NativeInterop.BottleInspectionResult result) => NativeInterop.InspectBottle(out result);
 }

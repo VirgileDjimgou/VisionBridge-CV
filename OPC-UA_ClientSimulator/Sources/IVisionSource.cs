@@ -16,6 +16,25 @@ public record RuntimeDiagnostics(
     string Uptime, string BackendMode, bool CameraRunning,
     long TotalInspections, double CurrentFps);
 
+/// <summary>Result of a bottle inspection — detection, cap, barcode, defects.</summary>
+public record BottleInspection(
+    bool BottleDetected,
+    DetectionBox BottleBox,
+    double BottleConfidence,
+    bool CapDetected,
+    DetectionBox CapBox,
+    bool BarcodeDetected,
+    bool QrDetected,
+    string? DecodedValue,
+    int BottleStatus,    // 0=None, 1=OK, 2=Defect
+    int DefectCount)
+{
+    public string StatusLabel => BottleStatus switch
+    {
+        1 => "OK", 2 => "DEFECT", _ => "NONE"
+    };
+}
+
 /// <summary>
 /// Abstraktion über verschiedene Vision-Datenquellen.
 /// Lokal (P/Invoke), REST API (HTTP) oder OPC-UA.
@@ -36,6 +55,7 @@ public interface IVisionSource : IDisposable
     MultiResult? DetectCircles();
     EdgeResult? DetectEdges();
     RuntimeDiagnostics? GetDiagnostics();
+    BottleInspection? InspectBottle();
 }
 
 /// <summary>

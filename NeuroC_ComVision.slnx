@@ -8,6 +8,7 @@
     <File Path=".gitignore" />
     <File Path="README.md" />
   </Folder>
+  <Folder Name="/Projektmappenelemente/NewFolder1/" />
   <Project Path="NeuroC_ComVision/NeuroC_ComVision.vcxproj" Id="726999f1-5d5c-492c-a1cf-88094fbe4def" />
   <Project Path="OPC-UA_ClientSimulator/OPC-UA_ClientSimulator.csproj" Id="af0317a8-94d9-41ea-acb9-d29761b9d214" />
   <Project Path="REST_API_NeuroC_Prep/REST_API_NeuroC_Prep.csproj" Id="0900e88b-1ad7-46ae-8957-2457b95f7316" />

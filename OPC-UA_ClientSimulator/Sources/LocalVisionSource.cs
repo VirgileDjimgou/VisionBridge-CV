@@ -171,5 +171,22 @@ public class LocalVisionSource : IVisionSource
     }
 
     public RuntimeDiagnostics? GetDiagnostics() => null;
+
+    public BottleInspection? InspectBottle()
+    {
+        if (!VisionInterop.InspectBottle(out var r))
+            return null;
+
+        return new BottleInspection(
+            r.bottleDetected,
+            new DetectionBox(r.bottleX, r.bottleY, r.bottleWidth, r.bottleHeight),
+            r.bottleConfidence,
+            r.capDetected,
+            new DetectionBox(r.capX, r.capY, r.capWidth, r.capHeight),
+            r.barcodeDetected, r.qrDetected,
+            string.IsNullOrEmpty(r.decodedValue) ? null : r.decodedValue,
+            r.bottleStatus, r.defectCount);
+    }
+
     public void Dispose() => Stop();
 }

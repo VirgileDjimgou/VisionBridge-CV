@@ -79,5 +79,29 @@ namespace OPC_UA_ClientSimulator
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool DetectCircles(out MultiDetectionResult result);
+
+        // --- Bottle Inspection ---
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        public struct BottleInspectionResult
+        {
+            [MarshalAs(UnmanagedType.I1)] public bool bottleDetected;
+            public int bottleX, bottleY, bottleWidth, bottleHeight;
+            public double bottleConfidence;
+
+            [MarshalAs(UnmanagedType.I1)] public bool capDetected;
+            public int capX, capY, capWidth, capHeight;
+
+            [MarshalAs(UnmanagedType.I1)] public bool barcodeDetected;
+            [MarshalAs(UnmanagedType.I1)] public bool qrDetected;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+            public string decodedValue;
+
+            public int bottleStatus;
+            public int defectCount;
+        }
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool InspectBottle(out BottleInspectionResult result);
     }
 }

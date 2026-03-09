@@ -1,10 +1,10 @@
 # VisionBridge
 
-C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST and OPC-UA on top.
+C++ / OpenCV vision engine bridged to C# via P/Invoke, with REST, OPC-UA, and industrial bottle inspection on top.
 
 I built this as a small technical playground for my portfolio. I originally started it while preparing
 for an interview at NeuroCheck (industrial image processing, Stuttgart) and it just kind of kept going
-because the problem space is genuinly fun to work with.
+because the problem space is genuinely fun to work with.
 
 The idea is pretty simple: a C++ DLL grabs frames from the laptop camera, runs OpenCV detection on them,
 and exports everything through a flat C interface. Then on the C# side I have multiple consumers that talk
@@ -15,8 +15,9 @@ in real industrial vision systems: fast native core, managed layer on top, multi
 ## What it does
 
 The C++ DLL does the heavy lifting: camera capture on a background thread, color filtering (HSV for red objects),
-face detection (Haar cascade), edge detection (Canny), circle detection (Hough transform). Everything
-mutex-protected, results exposed via `extern "C"` functions.
+face detection (Haar cascade), edge detection (Canny), circle detection (Hough transform), and a
+**multi-signal Volvic bottle inspection** pipeline. Everything mutex-protected, results exposed via
+`extern "C"` functions.
 
 On the C# side there's a single ASP.NET Core process that I call the **VisionBridge Runtime**. It owns
 the camera through P/Invoke and exposes the data through two protocols at once:
@@ -44,6 +45,60 @@ and REST sources write back to the server (conveyor speed, inspection toggle, re
 start/stop), turning the demo into a full bidirectional industrial loop from a single window.
 
 
+## Detection modes
+
+The system supports five detection modes, each accessible from the WPF client mode selector,
+the REST API, and OPC-UA nodes:
+
+### 1. Color detection (Red objects)
+
+HSV filtering in the C++ engine. Detects red objects and returns a bounding box, used as a
+simple defect signal in the sorting logic. If a red object is detected with confidence > 30%,
+the sorting logic automatically triggers the reject gate.
+
+### 2. Face detection (Haar cascade)
+
+Classical Haar cascade (`haarcascade_frontalface_default.xml`) loaded at startup. Detects up to
+32 faces per frame. In the sorting logic, any detected face triggers an immediate **safety halt** —
+simulating a real industrial scenario where a person in the machine zone requires an emergency stop.
+
+### 3. Edge detection (Canny)
+
+Gaussian blur + Canny edge detection. Returns a single-channel grayscale image that can be
+displayed directly in the WPF client. Useful for surface inspection and contour analysis.
+
+### 4. Circle detection (Hough transform)
+
+`HoughCircles` on a blurred grayscale frame. Results are packed as bounding boxes around each
+detected circle. The sorting logic uses circle count as a quality metric (≥ 3 circles = quality OK).
+
+### 5. Volvic bottle inspection 🍾
+
+A multi-signal inspection pipeline specifically tuned for **Volvic 1.5L PET bottles**. This is not
+a generic bottle detector — it leverages the specific visual characteristics of Volvic bottles
+(green cap, white label with mountain graphics) for robust identification.
+
+**Detection signals:**
+
+| Signal | Method | Purpose |
+|--------|--------|---------|
+| Green cap | HSV color filtering (H: 30–90) + contour analysis | Primary anchor — the green Volvic cap is the strongest, most reliable signal |
+| White label | Thresholding in the region below the detected cap | Confirms bottle body position and refines the bounding box |
+| Bottle body | Geometric inference from cap + label positions | Estimates the full bottle bounding box even on a transparent body |
+| QR / Barcode | OpenCV `QRCodeDetector` | Optional — decodes any QR code visible on the bottle |
+
+**Inspection verdict:**
+
+The system determines if the bottle is **OK** or **DEFECT** based on cap detection confidence.
+If the cap confidence is too low (< 0.3), a defect is counted. The overall status is
+`BOTTLE_OK` (no defects) or `BOTTLE_DEFECT` (one or more defects).
+
+**Why Volvic specifically?** The green cap provides an extremely strong color anchor in HSV space
+that is rarely confused with background elements. Combined with the white label below it, the system
+can reliably detect and localize the bottle even when the body is transparent and hard to segment
+with traditional edge-based methods.
+
+
 ## Architecture
 
 ```mermaid
@@ -54,7 +109,7 @@ graph LR
         direction TB
         BACKEND["IVisionBackend\nNative (C++ DLL) or Simulated"]
         SVC["VisionService\nSingleton\n+ Metrics + PlantControl"]
-        REST["REST API\n/api/camera\n/api/detection\n/api/frame\n/api/diagnostics\n/api/plant"]
+        REST["REST API\n/api/camera\n/api/detection\n/api/frame\n/api/bottleinspection\n/api/diagnostics\n/api/plant"]
         OPC["OPC-UA Server\nopc.tcp://:4840/visionbridge\nMethods + Writable Nodes"]
         SWAGGER["Swagger UI"]
 
@@ -101,19 +156,21 @@ Camera capture on a dedicated thread with `std::mutex` for frame access. The exp
 | `DetectEdges` | Gaussian blur + Canny, outputs single-channel grayscale |
 | `DetectCircles` | Hough transform, results packed as bounding boxes |
 | `GetFrameInfo` / `GetFrameBytesRgb` | Raw frame data with stride info, BGR or RGB |
+| `InspectBottle` | Multi-signal Volvic bottle inspection (cap, label, body, QR) |
 
 
 ### VisionBridge Runtime (REST_API_NeuroC_Prep)
 
 This is the central process. ASP.NET Core 8, owns the camera via P/Invoke.
 
-The REST API has five controller groups:
+The REST API has six controller groups:
 
 | Controller | Endpoints |
 |------------|-----------|
 | `CameraController` | `POST start`, `stop`, `GET status`, `POST cascade` |
 | `DetectionController` | `GET color`, `faces`, `circles`, `edges` (all with InspectionId, Timestamp, Confidence) |
 | `FrameController` | `GET info`, `rgb` (Base64), `image` (BMP download) |
+| `BottleInspectionController` | `GET` full bottle inspection (detection, cap, barcode/QR, verdict) |
 | `PlantController` | `GET` state, `POST conveyor-speed`, `inspection`, `reject-gate` |
 | `DiagnosticsController` | `GET` full diagnostics, `GET health` |
 
@@ -139,6 +196,12 @@ Objects/Vision
 ├── Circles/
 │   ├── Count                (Int32)
 │   └── Confidence           (Double)
+├── Bottle/
+│   ├── Detected             (Boolean)
+│   ├── Confidence           (Double)
+│   ├── CapDetected          (Boolean)
+│   ├── Status               (Int32 — 0=None, 1=OK, 2=Defect)
+│   └── DefectCount          (Int32)
 ├── Control/                          ← WRITABLE by OPC-UA clients
 │   ├── ConveyorSpeed        (Double, r/w — 0–5 m/s)
 │   ├── InspectionEnabled    (Boolean, r/w)
@@ -160,16 +223,16 @@ This project merges the former **VisionClientWPF** (vision lab / video rendering
 
 | Area | Content |
 |------|--------|
-| **Left panel** — Vision Lab | Live video + overlay canvas (bounding boxes, ellipses), detection mode selector (Color / Face / Edge / Circle), FPS counter |
-| **Right panel** — SPS / Steuerung | Detection values (camera status, color, faces, circles with confidence), plant control (conveyor speed, inspection, reject gate), current sorting decision + statistics |
+| **Left panel** — Vision Lab | Live video + overlay canvas (bounding boxes, ellipses), detection mode selector (Color / Face / Edge / Circle / Bottle Inspection), FPS counter |
+| **Right panel** — SPS / Steuerung | Detection values (camera status, color, faces, circles, bottle status with confidence), plant control (conveyor speed, inspection, reject gate), current sorting decision + statistics |
 | **Bottom bar** | Runtime diagnostics (uptime, backend, server FPS, inspections) + sorting log |
 
 **Data sources** — pick one from the dropdown and hit Start:
 
 | Source | Video | Detection | Plant Control | Diagnostics | Latency |
 |--------|:-----:|:---------:|:-------------:|:-----------:|:-------:|
-| Lokal (P/Invoke) | 30 FPS | All 4 modes | — | — | ~1ms |
-| REST API (HTTP) | ~5 FPS | All 4 modes | ✅ via REST | ✅ | ~10ms |
+| Lokal (P/Invoke) | 30 FPS | All 5 modes | — | — | ~1ms |
+| REST API (HTTP) | ~5 FPS | All 5 modes | ✅ via REST | ✅ | ~10ms |
 | OPC-UA | — | Scalar values | ✅ via Write + Methods | ✅ | ~250ms |
 
 All three sources implement `IVisionSource`. Sources that support bidirectional control also
@@ -196,6 +259,13 @@ automatically when the active source supports it.
 When a defect is detected, the reject gate opens automatically via `IPlantControl`
 and closes again when the defect clears.
 
+**Bottle inspection overlay:**
+
+When the bottle inspection mode is selected, the WPF client renders:
+- A **bounding box** around the detected bottle (green if OK, red if defect)
+- A **cyan bounding box** around the detected cap
+- Status text showing confidence and cap presence
+
 
 ### OPC-UA_Server (deprecated)
 
@@ -220,7 +290,7 @@ as a hosted service, so this project is basically dead code at this point.
 NeuroC_ComVision/
 ├── NeuroC_ComVision/              # C++ DLL
 │   ├── NeuroC_ComVision.h         # C export interface
-│   └── NeuroC_ComVision.cpp       # Capture thread + detection algorithms
+│   └── NeuroC_ComVision.cpp       # Capture thread + detection algorithms + bottle inspection
 │
 ├── REST_API_NeuroC_Prep/          # VisionBridge Runtime
 │   ├── Program.cs                 # Registers VisionService + OpcUaHostedService
@@ -234,9 +304,10 @@ NeuroC_ComVision/
 │   │   ├── CameraController.cs    # Start, Stop, Status, Cascade
 │   │   ├── DetectionController.cs # Color, Faces, Circles, Edges
 │   │   ├── FrameController.cs     # Frame info, RGB, BMP image
+│   │   ├── BottleInspectionController.cs # Volvic bottle inspection
 │   │   ├── PlantController.cs     # Conveyor speed, Inspection, Reject gate
 │   │   └── DiagnosticsController.cs # Health check + runtime metrics
-│   ├── Models/VisionDtos.cs       # DTOs (with Timestamp, Confidence, PlantControl, Diagnostics)
+│   ├── Models/VisionDtos.cs       # DTOs (with Timestamp, Confidence, PlantControl, Diagnostics, BottleInspection)
 │   └── OpcUa/
 │       ├── VisionNodeManager.cs   # OPC-UA node tree + Methods + Write callbacks + polling
 │       ├── VisionOpcUaServer.cs
@@ -261,12 +332,14 @@ NeuroC_ComVision/
 **Simulation mode (no camera or DLL needed):**
 Set `"VisionBridge:Simulation": true` in `appsettings.json` (or pass `--VisionBridge:Simulation=true`
 on the command line), then start `REST_API_NeuroC_Prep`. The API generates synthetic detection data —
-a red object moving on a simulated conveyor belt, cycling face/circle counts. All endpoints work
+a red object moving on a simulated conveyor belt, cycling face/circle counts, and simulated bottle
+inspections alternating between cap-present (OK) and cap-missing (DEFECT) scenarios. All endpoints work
 identically to the real camera mode. This is the easiest way to explore the project without any hardware.
 
 **Just the local camera (no server needed):**
 Start `OPC-UA_ClientSimulator`, pick "Lokal (P/Invoke)" and click Start.
 You need the DLL in the output directory. Video + detection + sorting logic work standalone.
+Switch to "🍾 Flascheninspektion" mode to run live bottle inspection with bounding box overlays.
 
 **The full industrial loop:**
 1. Start `REST_API_NeuroC_Prep` (launches REST API + OPC-UA server in one process)
@@ -276,17 +349,28 @@ You need the DLL in the output directory. Video + detection + sorting logic work
 5. Use the **▶ Kamera / ■ Kamera** buttons to start/stop the camera remotely
 6. Watch sorting decisions + confidence scores in real time on the right panel
 7. Observe the reject gate auto-opening when a red defect is detected
-8. Switch to "REST API" to see live video *and* plant control at the same time
-9. Or connect UaExpert to `opc.tcp://localhost:4840/visionbridge` to browse all nodes
-10. Try `GET /api/diagnostics` or `GET /api/plant` in Swagger
+8. Switch to "🍾 Flascheninspektion" mode to see bottle detection + cap status
+9. Switch to "REST API" to see live video *and* plant control at the same time
+10. Or connect UaExpert to `opc.tcp://localhost:4840/visionbridge` to browse all nodes
+11. Try `GET /api/bottleinspection` or `GET /api/diagnostics` in Swagger
 
-**New REST endpoints to try:**
-- `GET /api/diagnostics` — uptime, backend mode, FPS, inspection count, plant state, last detection
-- `GET /api/diagnostics/health` — simple health check
-- `GET /api/plant` — current conveyor speed, inspection toggle, reject gate
-- `POST /api/plant/conveyor-speed?speed=2.5` — set conveyor speed
-- `POST /api/plant/inspection?enabled=false` — disable inspection
-- `POST /api/plant/reject-gate?open=true` — open reject gate
+**REST endpoints:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/bottleinspection` | Full bottle inspection (detection, cap, barcode/QR, verdict) |
+| `GET /api/detection/color` | Red object detection with bounding box |
+| `GET /api/detection/faces` | Face detection (count + bounding boxes) |
+| `GET /api/detection/circles` | Circle detection (Hough) |
+| `GET /api/detection/edges` | Canny edge detection (grayscale image) |
+| `GET /api/frame/rgb` | Current frame as Base64-encoded RGB |
+| `GET /api/frame/image` | Current frame as BMP download |
+| `GET /api/diagnostics` | Uptime, backend mode, FPS, inspection count, plant state |
+| `GET /api/diagnostics/health` | Simple health check |
+| `GET /api/plant` | Current conveyor speed, inspection toggle, reject gate |
+| `POST /api/plant/conveyor-speed?speed=2.5` | Set conveyor speed |
+| `POST /api/plant/inspection?enabled=false` | Disable inspection |
+| `POST /api/plant/reject-gate?open=true` | Open reject gate |
 
 
 ## What I got out of this
@@ -316,6 +400,8 @@ Some of the things I worked through:
 * **Industrial traceability**: adding inspection IDs, timestamps, and confidence scores to every detection
 * **Runtime observability**: health checks, FPS tracking, uptime, inspection counters — the kind of
   diagnostics you'd expect in any production vision system
+* **Multi-signal vision pipeline**: combining HSV color filtering, contour analysis, geometric inference,
+  and QR detection into a single inspection function tuned for a specific product (Volvic bottle)
 
 Nothing groundbreaking. Just the kind of practice that sticks.
 
@@ -329,5 +415,3 @@ Don't expect industrial-grade anything here.
 ## Author
 
 Patrick Djimgou
-
-

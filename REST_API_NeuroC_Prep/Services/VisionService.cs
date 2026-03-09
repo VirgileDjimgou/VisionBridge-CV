@@ -325,6 +325,47 @@ namespace REST_API_NeuroC_Prep.Services
             }
         }
 
+        // ===== Bottle Inspection =====
+
+        public BottleInspectionDto? InspectBottle()
+        {
+            lock (_lock)
+            {
+                if (!_running) return null;
+
+                var sw = Stopwatch.StartNew();
+                if (!_backend.InspectBottle(out var result)) return null;
+                sw.Stop();
+
+                TrackFrame();
+                long id = ++_inspectionCounter;
+                var now = DateTime.UtcNow;
+
+                if (result.bottleDetected)
+                    _lastDetection = new LastDetectionDto("bottle", now,
+                        result.bottleConfidence, sw.Elapsed.TotalMilliseconds);
+
+                return new BottleInspectionDto(
+                    result.bottleDetected,
+                    result.bottleDetected
+                        ? new BoundingBoxDto(result.bottleX, result.bottleY,
+                            result.bottleWidth, result.bottleHeight)
+                        : null,
+                    result.bottleConfidence,
+                    result.capDetected,
+                    result.capDetected
+                        ? new BoundingBoxDto(result.capX, result.capY,
+                            result.capWidth, result.capHeight)
+                        : null,
+                    result.barcodeDetected,
+                    result.qrDetected,
+                    string.IsNullOrEmpty(result.decodedValue) ? null : result.decodedValue,
+                    (BottleStatusEnum)result.bottleStatus,
+                    result.defectCount,
+                    id, now);
+            }
+        }
+
         // ===== Hilfsmethoden =====
 
         private void TrackFrame()

@@ -70,4 +70,44 @@ extern "C"
 
     // --- NEU: Cascade laden ---
     NEUROC_API bool LoadFaceCascade(const char* cascadePath);
+
+    // --- Bottle Inspection Module ---
+    // Industrial bottle inspection for beverage production lines.
+    // Detects bottle presence, cap, barcode, and defects.
+
+    enum BottleStatus
+    {
+        BOTTLE_NONE   = 0,  // no bottle detected
+        BOTTLE_OK     = 1,
+        BOTTLE_DEFECT = 2
+    };
+
+    struct BottleInspectionResult
+    {
+        // Bottle detection
+        bool  bottleDetected;
+        int   bottleX;
+        int   bottleY;
+        int   bottleWidth;
+        int   bottleHeight;
+        double bottleConfidence;
+
+        // Cap detection
+        bool  capDetected;
+        int   capX;
+        int   capY;
+        int   capWidth;
+        int   capHeight;
+
+        // Barcode / QR detection
+        bool  barcodeDetected;
+        bool  qrDetected;
+        char  decodedValue[256];
+
+        // Overall status
+        int   bottleStatus;     // BottleStatus enum
+        int   defectCount;
+    };
+
+    NEUROC_API bool InspectBottle(BottleInspectionResult* result);
 }

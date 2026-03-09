@@ -21,6 +21,11 @@ namespace REST_API_NeuroC_Prep.OpcUa;
 ///     ├── Faces/Confidence           (Double)
 ///     ├── Circles/Count              (Int32)
 ///     ├── Circles/Confidence         (Double)
+///     ├── Bottle/Detected            (Boolean)
+///     ├── Bottle/Confidence          (Double)
+///     ├── Bottle/CapDetected         (Boolean)
+///     ├── Bottle/Status              (Int32, 0=None,1=OK,2=Defect)
+///     ├── Bottle/DefectCount         (Int32)
 ///     ├── Control/ConveyorSpeed      (Double, read/write)
 ///     ├── Control/InspectionEnabled  (Boolean, read/write)
 ///     ├── Control/RejectGateOpen     (Boolean, read/write)
@@ -49,6 +54,13 @@ public class VisionNodeManager : CustomNodeManager2
     private BaseDataVariableState<double>? _faceConfidence;
     private BaseDataVariableState<int>? _circleCount;
     private BaseDataVariableState<double>? _circleConfidence;
+
+    // Bottle inspection (read-only)
+    private BaseDataVariableState<bool>? _bottleDetected;
+    private BaseDataVariableState<double>? _bottleConfidence;
+    private BaseDataVariableState<bool>? _bottleCapDetected;
+    private BaseDataVariableState<int>? _bottleStatus;
+    private BaseDataVariableState<int>? _bottleDefectCount;
 
     // Control (read/write)
     private BaseDataVariableState<double>? _conveyorSpeed;
@@ -113,6 +125,14 @@ public class VisionNodeManager : CustomNodeManager2
             _circleCount = CreateReadOnlyVariable(circles, "Count", DataTypeIds.Int32, 0);
             _circleConfidence = CreateReadOnlyVariable(circles, "Confidence", DataTypeIds.Double, 0.0);
 
+            // ===== Bottle Inspection (read-only) =====
+            var bottle = CreateFolder(root, "Bottle", "Bottle");
+            _bottleDetected = CreateReadOnlyVariable(bottle, "Detected", DataTypeIds.Boolean, false);
+            _bottleConfidence = CreateReadOnlyVariable(bottle, "Confidence", DataTypeIds.Double, 0.0);
+            _bottleCapDetected = CreateReadOnlyVariable(bottle, "CapDetected", DataTypeIds.Boolean, false);
+            _bottleStatus = CreateReadOnlyVariable(bottle, "Status", DataTypeIds.Int32, 0);
+            _bottleDefectCount = CreateReadOnlyVariable(bottle, "DefectCount", DataTypeIds.Int32, 0);
+
             // ===== Control (read/write — PLC kann schreiben) =====
             var ctrl = CreateFolder(root, "Control", "Control");
             _conveyorSpeed = CreateWritableVariable(ctrl, "ConveyorSpeed", DataTypeIds.Double, 1.2);
@@ -170,6 +190,7 @@ public class VisionNodeManager : CustomNodeManager2
             var colorDto = _vision.DetectColor();
             var facesDto = _vision.DetectFaces();
             var circlesDto = _vision.DetectCircles();
+            var bottleDto = _vision.InspectBottle();
             var diag = _vision.GetDiagnostics();
             var plant = _vision.GetPlantControl();
 
@@ -201,6 +222,16 @@ public class VisionNodeManager : CustomNodeManager2
                 {
                     SetValue(_circleCount, circlesDto.Count);
                     SetValue(_circleConfidence, circlesDto.Confidence);
+                }
+
+                // Bottle inspection
+                if (bottleDto != null)
+                {
+                    SetValue(_bottleDetected, bottleDto.BottleDetected);
+                    SetValue(_bottleConfidence, bottleDto.BottleConfidence);
+                    SetValue(_bottleCapDetected, bottleDto.CapDetected);
+                    SetValue(_bottleStatus, (int)bottleDto.BottleStatus);
+                    SetValue(_bottleDefectCount, bottleDto.DefectCount);
                 }
 
                 // Control — liest den aktuellen Zustand zurück (falls via REST geändert)

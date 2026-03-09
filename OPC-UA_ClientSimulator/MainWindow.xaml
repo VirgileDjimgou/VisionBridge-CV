@@ -73,6 +73,7 @@
                                 <ComboBoxItem Content="Gesicht"/>
                                 <ComboBoxItem Content="Kanten (Canny)"/>
                                 <ComboBoxItem Content="Kreise (Hough)"/>
+                                <ComboBoxItem Content="🍾 Flascheninspektion"/>
                             </ComboBox>
                             <TextBlock x:Name="ConfidenceText" Grid.Column="1"
                                        Foreground="#f39c12" FontSize="12"
@@ -129,6 +130,11 @@
                             <StackPanel>
                                 <TextBlock Text="⭕ Kreise" Foreground="#3498db" FontWeight="Bold"/>
                                 <TextBlock x:Name="TxtCircleInfo" Text="—" Foreground="#ccc" FontSize="12"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,5,0,0">
+                                <TextBlock Text="🍾 Flasche" Foreground="#2ecc71" FontWeight="Bold"/>
+                                <TextBlock x:Name="TxtBottleInfo" Text="—" Foreground="#ccc" FontSize="12"
+                                           TextWrapping="Wrap"/>
                             </StackPanel>
                         </StackPanel>
                     </Border>

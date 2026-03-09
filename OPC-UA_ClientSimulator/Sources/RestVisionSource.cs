@@ -109,6 +109,32 @@ public class RestVisionSource : IVisionSource, IPlantControl
         catch { return null; }
     }
 
+    public BottleInspection? InspectBottle()
+    {
+        try
+        {
+            var json = Task.Run(() => _http.GetStringAsync("api/bottleinspection")).Result;
+            var r = JsonSerializer.Deserialize<BottleInspDto>(json, JsonOpts);
+            if (r == null) return null;
+
+            return new BottleInspection(
+                r.BottleDetected,
+                r.BottleBoundingBox != null
+                    ? new DetectionBox(r.BottleBoundingBox.X, r.BottleBoundingBox.Y,
+                        r.BottleBoundingBox.Width, r.BottleBoundingBox.Height)
+                    : default,
+                r.BottleConfidence,
+                r.CapDetected,
+                r.CapBoundingBox != null
+                    ? new DetectionBox(r.CapBoundingBox.X, r.CapBoundingBox.Y,
+                        r.CapBoundingBox.Width, r.CapBoundingBox.Height)
+                    : default,
+                r.BarcodeDetected, r.QrDetected, r.DecodedValue,
+                r.BottleStatus, r.DefectCount);
+        }
+        catch { return null; }
+    }
+
     // ===== IPlantControl (via REST) =====
 
     public void CameraStart()
@@ -170,4 +196,5 @@ public class RestVisionSource : IVisionSource, IPlantControl
     private class DetItemDto { public BoxDto BoundingBox { get; set; } = new(); }
     private class EdgeDto { public int Width { get; set; } public int Height { get; set; } public string? Base64Data { get; set; } }
     private class DiagDto { public string Uptime { get; set; } = ""; public string BackendMode { get; set; } = ""; public bool CameraRunning { get; set; } public long TotalInspections { get; set; } public double CurrentFps { get; set; } }
+    private class BottleInspDto { public bool BottleDetected { get; set; } public BoxDto? BottleBoundingBox { get; set; } public double BottleConfidence { get; set; } public bool CapDetected { get; set; } public BoxDto? CapBoundingBox { get; set; } public bool BarcodeDetected { get; set; } public bool QrDetected { get; set; } public string? DecodedValue { get; set; } public int BottleStatus { get; set; } public int DefectCount { get; set; } }
 }
